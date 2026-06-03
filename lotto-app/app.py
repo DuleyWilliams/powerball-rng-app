@@ -11,6 +11,12 @@ from analytics import (
     score_tickets
 )
 
+from charts import (
+    hot_numbers_chart,
+    cold_numbers_chart,
+    powerball_chart
+)
+
 st.set_page_config(
     page_title="Powerball RNG Engine",
     layout="wide"
@@ -149,3 +155,29 @@ if draws:
     )
 else:
     st.warning("No draw data loaded yet.")
+
+st.divider()
+
+st.header("Visual Analytics")
+
+if draws:
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        st.plotly_chart(
+            hot_numbers_chart(draws),
+            use_container_width=True
+        )
+
+        st.plotly_chart(
+            cold_numbers_chart(draws),
+            use_container_width=True
+        )
+
+    with chart_col2:
+        st.plotly_chart(
+            powerball_chart(draws),
+            use_container_width=True
+        )
+else:
+    st.warning("No chart data available yet.")
