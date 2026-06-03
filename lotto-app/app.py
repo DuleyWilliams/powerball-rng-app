@@ -10,12 +10,13 @@ from analytics import (
     repeated_pairs,
     score_tickets
 )
-
 from charts import (
     hot_numbers_chart,
     cold_numbers_chart,
     powerball_chart
 )
+from condensation import condense_tickets
+
 
 st.set_page_config(
     page_title="Powerball RNG Engine",
@@ -24,6 +25,8 @@ st.set_page_config(
 
 st.title("Powerball RNG Engine")
 st.caption("Weighted generator based on your saved historical draw data.")
+
+draws = load_draws()
 
 col1, col2 = st.columns(2)
 
@@ -35,10 +38,16 @@ with col1:
         value=5
     )
 
+    candidate_pool_size = st.number_input(
+        "Candidate pool size for condensation",
+        min_value=100,
+        max_value=10000,
+        value=1000,
+        step=100
+    )
+
     if st.button("Generate Numbers"):
         tickets = generate_tickets(ticket_count)
-        draws = load_draws()
-
         scored = score_tickets(tickets, draws)
 
         scored_rows = []
@@ -86,6 +95,36 @@ with col1:
             mime="text/csv"
         )
 
+    if st.button("Generate Condensed Tickets"):
+        candidate_tickets = generate_tickets(candidate_pool_size)
+        scored_candidates = score_tickets(candidate_tickets, draws)
+
+        condensed_rows = condense_tickets(
+            scored_candidates,
+            target_count=ticket_count
+        )
+
+        if condensed_rows:
+            condensed_df = pd.DataFrame(condensed_rows)
+
+            st.subheader("Condensed Ticket Set")
+            st.caption(
+                "Generated from a larger candidate pool, then reduced for stronger coverage and less overlap."
+            )
+
+            st.dataframe(condensed_df, width="stretch")
+
+            condensed_csv = condensed_df.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                label="Download Condensed Tickets CSV",
+                data=condensed_csv,
+                file_name="condensed_powerball_tickets.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No condensed tickets generated. Try increasing the candidate pool size.")
+
 with col2:
     st.subheader("Update Data")
 
@@ -99,8 +138,6 @@ with col2:
 
 st.divider()
 
-draws = load_draws()
-
 st.subheader("Current Dataset")
 st.write(f"Total drawings loaded: {len(draws)}")
 
@@ -111,29 +148,31 @@ if draws:
     )
 
     st.dataframe(history_df.head(100), width="stretch")
+else:
+    st.warning("No draw data loaded yet.")
 
 st.divider()
 
 st.header("Draw Analytics")
 
 if draws:
-    col1, col2, col3 = st.columns(3)
+    stat_col1, stat_col2, stat_col3 = st.columns(3)
 
-    with col1:
+    with stat_col1:
         st.subheader("Hot White Balls")
         st.dataframe(
             pd.DataFrame(hot_numbers(draws), columns=["Number", "Times Drawn"]),
             width="stretch"
         )
 
-    with col2:
+    with stat_col2:
         st.subheader("Cold White Balls")
         st.dataframe(
             pd.DataFrame(cold_numbers(draws), columns=["Number", "Times Drawn"]),
             width="stretch"
         )
 
-    with col3:
+    with stat_col3:
         st.subheader("Hot Powerballs")
         st.dataframe(
             pd.DataFrame(hot_powerballs(draws), columns=["Powerball", "Times Drawn"]),
@@ -154,7 +193,7 @@ if draws:
         width="stretch"
     )
 else:
-    st.warning("No draw data loaded yet.")
+    st.warning("No analytics data available yet.")
 
 st.divider()
 
