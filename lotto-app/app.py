@@ -17,6 +17,11 @@ from charts import (
 )
 from condensation import condense_tickets
 
+from gap_analysis import (
+    white_ball_gap_analysis,
+    powerball_gap_analysis
+)
+
 
 st.set_page_config(
     page_title="Powerball RNG Engine",
@@ -196,6 +201,29 @@ else:
     st.warning("No analytics data available yet.")
 
 st.divider()
+
+st.divider()
+
+st.header("Number Gap Analysis")
+
+if draws:
+    gap_col1, gap_col2 = st.columns(2)
+
+    with gap_col1:
+        st.subheader("White Ball Gaps")
+        st.caption("Numbers ranked by how many drawings have passed since they last appeared.")
+
+        white_gap_df = pd.DataFrame(white_ball_gap_analysis(draws))
+        st.dataframe(white_gap_df.head(20), width="stretch")
+
+    with gap_col2:
+        st.subheader("Powerball Gaps")
+        st.caption("Powerballs ranked by how many drawings have passed since they last appeared.")
+
+        powerball_gap_df = pd.DataFrame(powerball_gap_analysis(draws))
+        st.dataframe(powerball_gap_df.head(20), width="stretch")
+else:
+    st.warning("No gap data available yet.")
 
 st.header("Visual Analytics")
 
