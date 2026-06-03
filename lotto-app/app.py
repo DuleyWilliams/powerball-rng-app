@@ -205,18 +205,18 @@ if draws:
     with chart_col1:
         st.plotly_chart(
             hot_numbers_chart(draws),
-            use_container_width=True
+            width="stretch"
         )
 
         st.plotly_chart(
             cold_numbers_chart(draws),
-            use_container_width=True
+            width="stretch"
         )
 
     with chart_col2:
         st.plotly_chart(
             powerball_chart(draws),
-            use_container_width=True
+            width="stretch"
         )
 else:
     st.warning("No chart data available yet.")
