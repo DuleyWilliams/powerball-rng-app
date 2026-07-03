@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from filters import filter_tickets
 
 from generator import generate_tickets, load_draws
 from fetch_tn_powerball import update_numbers
@@ -52,7 +53,7 @@ with col1:
     )
 
     if st.button("Generate Numbers"):
-        tickets = generate_tickets(ticket_count)
+        tickets, rejected_tickets = filter_tickets(generate_tickets(ticket_count))
         scored = score_tickets(tickets, draws)
 
         scored_rows = []
@@ -101,7 +102,7 @@ with col1:
         )
 
     if st.button("Generate Condensed Tickets"):
-        candidate_tickets = generate_tickets(candidate_pool_size)
+        candidate_tickets, rejected_tickets = filter_tickets(generate_tickets(candidate_pool_size))
         scored_candidates = score_tickets(candidate_tickets, draws)
 
         condensed_rows = condense_tickets(
