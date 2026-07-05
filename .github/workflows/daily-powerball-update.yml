@@ -1,0 +1,39 @@
+name: Daily Powerball Update
+
+on:
+  schedule:
+    - cron: "30 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-powerball-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Fetch latest Powerball drawing
+        working-directory: lotto-app
+        run: python fetch_tn_powerball.py
+
+      - name: Commit updated numbers file
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add lotto-app/numbers.json
+          git diff --cached --quiet || git commit -m "Auto update latest Powerball drawing"
+          git push
