@@ -1,7 +1,15 @@
-def white_ball_gap_analysis(draws):
+"""Gap analysis: how many drawings have passed since each number last appeared."""
+
+from core.config import WHITE_BALL_MIN, WHITE_BALL_MAX, POWERBALL_MIN, POWERBALL_MAX
+from data.repository import Draw
+
+_NEVER_SEEN_SORT_KEY = 9999
+
+
+def white_ball_gap_analysis(draws: list[Draw]) -> list[dict]:
     gaps = []
 
-    for number in range(1, 70):
+    for number in range(WHITE_BALL_MIN, WHITE_BALL_MAX + 1):
         last_seen = None
 
         for index, draw in enumerate(draws):
@@ -13,22 +21,22 @@ def white_ball_gap_analysis(draws):
 
         gaps.append({
             "Number": number,
-            "Drawings Since Last Seen": last_seen if last_seen is not None else "Never Seen"
+            "Drawings Since Last Seen": last_seen if last_seen is not None else "Never Seen",
         })
 
     return sorted(
         gaps,
         key=lambda item: item["Drawings Since Last Seen"]
         if isinstance(item["Drawings Since Last Seen"], int)
-        else 9999,
-        reverse=True
+        else _NEVER_SEEN_SORT_KEY,
+        reverse=True,
     )
 
 
-def powerball_gap_analysis(draws):
+def powerball_gap_analysis(draws: list[Draw]) -> list[dict]:
     gaps = []
 
-    for number in range(1, 27):
+    for number in range(POWERBALL_MIN, POWERBALL_MAX + 1):
         last_seen = None
 
         for index, draw in enumerate(draws):
@@ -40,13 +48,13 @@ def powerball_gap_analysis(draws):
 
         gaps.append({
             "Powerball": number,
-            "Drawings Since Last Seen": last_seen if last_seen is not None else "Never Seen"
+            "Drawings Since Last Seen": last_seen if last_seen is not None else "Never Seen",
         })
 
     return sorted(
         gaps,
         key=lambda item: item["Drawings Since Last Seen"]
         if isinstance(item["Drawings Since Last Seen"], int)
-        else 9999,
-        reverse=True
+        else _NEVER_SEEN_SORT_KEY,
+        reverse=True,
     )

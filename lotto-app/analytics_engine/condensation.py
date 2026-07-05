@@ -1,44 +1,29 @@
+"""Combinatorial condensation: reduce a large scored candidate pool down to
+a smaller set with strong coverage and low overlap.
+"""
+
 from itertools import combinations
 
+from core.patterns import analyze_pattern, is_weak_pattern as _is_weak_pattern
 
-def normalize_ticket(ticket):
-    white_balls = sorted([int(n) for n in ticket[:5]])
+Ticket = list[int]
+
+
+def normalize_ticket(ticket: Ticket) -> Ticket:
+    white_balls = sorted(int(n) for n in ticket[:5])
     powerball = int(ticket[5])
     return white_balls + [powerball]
 
 
-def get_pairs(ticket):
+def get_pairs(ticket: Ticket) -> set[tuple[int, int]]:
     return set(combinations(ticket[:5], 2))
 
 
-def is_weak_pattern(ticket):
-    white_balls = ticket[:5]
-
-    odd_count = sum(1 for n in white_balls if n % 2 != 0)
-    low_count = sum(1 for n in white_balls if n <= 35)
-    white_sum = sum(white_balls)
-
-    consecutive_count = sum(
-        1 for a, b in zip(white_balls, white_balls[1:])
-        if b - a == 1
-    )
-
-    if odd_count in [0, 5]:
-        return True
-
-    if low_count in [0, 5]:
-        return True
-
-    if white_sum < 90 or white_sum > 240:
-        return True
-
-    if consecutive_count >= 3:
-        return True
-
-    return False
+def is_weak_pattern(ticket: Ticket) -> bool:
+    return _is_weak_pattern(analyze_pattern(ticket[:5]))
 
 
-def overlap_score(ticket, selected):
+def overlap_score(ticket: Ticket, selected: list[Ticket]) -> int:
     score = 0
     ticket_whites = set(ticket[:5])
     ticket_pairs = get_pairs(ticket)
@@ -59,7 +44,12 @@ def overlap_score(ticket, selected):
     return score
 
 
-def coverage_score(ticket, covered_numbers, covered_pairs, covered_powerballs):
+def coverage_score(
+    ticket: Ticket,
+    covered_numbers: set[int],
+    covered_pairs: set[tuple[int, int]],
+    covered_powerballs: set[int],
+) -> int:
     ticket_whites = set(ticket[:5])
     ticket_pairs = get_pairs(ticket)
 
@@ -70,7 +60,7 @@ def coverage_score(ticket, covered_numbers, covered_pairs, covered_powerballs):
     return (new_numbers * 6) + (new_pairs * 2) + (new_powerball * 5)
 
 
-def condense_tickets(scored_tickets, target_count=10):
+def condense_tickets(scored_tickets: list[dict], target_count: int = 10) -> list[dict]:
     cleaned = []
 
     for item in scored_tickets:
@@ -84,15 +74,15 @@ def condense_tickets(scored_tickets, target_count=10):
             "score": item["score"],
             "odd_even": item["odd_even"],
             "low_high": item["low_high"],
-            "sum": item["sum"]
+            "sum": item["sum"],
         })
 
-    selected = []
-    selected_rows = []
+    selected: list[Ticket] = []
+    selected_rows: list[dict] = []
 
-    covered_numbers = set()
-    covered_pairs = set()
-    covered_powerballs = set()
+    covered_numbers: set[int] = set()
+    covered_pairs: set[tuple[int, int]] = set()
+    covered_powerballs: set[int] = set()
 
     while len(selected) < target_count and cleaned:
         best_item = None
@@ -106,7 +96,7 @@ def condense_tickets(scored_tickets, target_count=10):
                 ticket,
                 covered_numbers,
                 covered_pairs,
-                covered_powerballs
+                covered_powerballs,
             )
             total_score -= overlap_score(ticket, selected)
 
@@ -135,7 +125,7 @@ def condense_tickets(scored_tickets, target_count=10):
             "Condensed Score": best_total_score,
             "Odd / Even": best_item["odd_even"],
             "Low / High": best_item["low_high"],
-            "White Ball Sum": best_item["sum"]
+            "White Ball Sum": best_item["sum"],
         })
 
         cleaned.remove(best_item)

@@ -1,26 +1,25 @@
 import streamlit as st
 import pandas as pd
-from filters import filter_tickets
 
-from generator import generate_tickets, load_draws
-from fetch_tn_powerball import update_numbers
-from analytics import (
+from data.repository import load_draws
+from services.ticket_service import generate_tickets, filter_tickets
+from services.update_service import update_numbers
+from analytics_engine.frequency import (
     hot_numbers,
     cold_numbers,
     hot_powerballs,
     repeated_pairs,
-    score_tickets
 )
-from charts import (
+from analytics_engine.scoring import score_tickets
+from analytics_engine.charts import (
     hot_numbers_chart,
     cold_numbers_chart,
-    powerball_chart
+    powerball_chart,
 )
-from condensation import condense_tickets
-
-from gap_analysis import (
+from analytics_engine.condensation import condense_tickets
+from analytics_engine.gaps import (
     white_ball_gap_analysis,
-    powerball_gap_analysis
+    powerball_gap_analysis,
 )
 
 
