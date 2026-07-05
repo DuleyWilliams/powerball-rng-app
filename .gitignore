@@ -28,6 +28,10 @@ env/
 .streamlit/
 .streamlit/secrets.toml
 
+# SQLite — regenerated automatically from numbers.json / import_history.py
+*.db
+.pytest_cache/
+
 # OS / editor
 .DS_Store
 Thumbs.db

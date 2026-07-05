@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 
-from data.repository import load_draws
+from data.migration import migrate_json_to_sqlite
+from data.repository import get_all_draws, database_statistics
 from services.ticket_service import generate_tickets, filter_tickets
 from services.update_service import update_numbers
 from analytics_engine.frequency import (
@@ -30,8 +31,32 @@ st.set_page_config(
 
 st.title("Powerball RNG Engine")
 st.caption("Weighted generator based on your saved historical draw data.")
+st.caption("Powerball drawings are independent random events — nothing here predicts future draws.")
 
-draws = load_draws()
+# SQLite is the primary data source; numbers.json (if present) is
+# migrated in automatically and idempotently on every startup.
+migration_summary = migrate_json_to_sqlite()
+
+draws = get_all_draws()
+
+st.subheader("Data Platform Status")
+
+stats = database_statistics()
+
+status_col1, status_col2, status_col3, status_col4, status_col5 = st.columns(5)
+status_col1.metric("Database Rows", stats.total_rows)
+status_col2.metric("Latest Draw Date", stats.latest_draw_date.isoformat() if stats.latest_draw_date else "—")
+status_col3.metric("Oldest Draw Date", stats.oldest_draw_date.isoformat() if stats.oldest_draw_date else "—")
+
+if migration_summary.source_found:
+    migration_status = f"{migration_summary.migrated} migrated / {migration_summary.skipped} present"
+else:
+    migration_status = "No numbers.json found"
+status_col4.metric("Migration Status", migration_status)
+
+status_col5.metric("Last Update", stats.last_updated_at if stats.last_updated_at else "Never")
+
+st.divider()
 
 col1, col2 = st.columns(2)
 

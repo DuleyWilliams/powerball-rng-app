@@ -9,7 +9,7 @@ from collections import Counter
 
 from core.config import WHITE_BALL_MIN, WHITE_BALL_MAX, WHITE_BALL_COUNT, POWERBALL_MIN, POWERBALL_MAX
 from core.patterns import analyze_pattern, is_weak_pattern, has_duplicate_white_balls
-from data.repository import load_draws
+from data.repository import get_all_draws
 
 Ticket = list[int]
 
@@ -31,7 +31,7 @@ def weighted_choice(counter: Counter, min_num: int, max_num: int, exclude: set[i
 
 
 def generate_ticket() -> Ticket:
-    draws = load_draws()
+    draws = get_all_draws()
 
     white_counter: Counter = Counter()
     powerball_counter: Counter = Counter()

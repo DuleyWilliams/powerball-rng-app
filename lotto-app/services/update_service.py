@@ -5,8 +5,11 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-from core.config import POWERBALL_URL, WHITE_BALL_MIN, WHITE_BALL_MAX, POWERBALL_MIN, POWERBALL_MAX
-from data.repository import load_dataset, save_dataset, Draw
+from core.config import POWERBALL_URL, WHITE_BALL_MIN, WHITE_BALL_MAX, POWERBALL_MIN, POWERBALL_MAX, SOURCE_TN_SCRAPER
+from data.json_export import export_draws_to_json
+from data.repository import Draw
+from etl.load import load_draw
+from etl.transform import TransformedDraw
 
 
 def fetch_powerball_page() -> str:
@@ -83,23 +86,42 @@ def fetch_latest_powerball() -> Draw:
 
 
 def update_numbers() -> dict:
-    data = load_dataset()
-    existing = data.get("numbers", [])
-
     latest = fetch_latest_powerball()
+    white_balls = latest[:5]
+    powerball = latest[5]
 
-    if latest not in existing:
-        existing.insert(0, latest)
-        data["numbers"] = existing
-        save_dataset(data)
+    # The TN "latest draw" page doesn't expose a parseable draw date,
+    # so this row is stored with draw_date=None (deduped by exact
+    # number match instead) — see services.update_service docstring.
+    transformed = TransformedDraw(
+        ball1=white_balls[0],
+        ball2=white_balls[1],
+        ball3=white_balls[2],
+        ball4=white_balls[3],
+        ball5=white_balls[4],
+        powerball=powerball,
+        draw_date=None,
+        date_parse_error=False,
+        source=SOURCE_TN_SCRAPER,
+        raw={"white_balls": white_balls, "powerball": powerball, "draw_date": None, "source": SOURCE_TN_SCRAPER},
+    )
+
+    outcome = load_draw(transformed, require_date=False)
+
+    if outcome.status == "failed":
+        raise ValueError(f"Scraped drawing failed validation: {', '.join(outcome.reasons)}")
+
+    if outcome.status == "skipped":
         return {
-            "updated": True,
+            "updated": False,
             "latest": latest,
-            "message": "New drawing added.",
+            "message": "Drawing already exists.",
         }
 
+    export_draws_to_json()
+
     return {
-        "updated": False,
+        "updated": True,
         "latest": latest,
-        "message": "Drawing already exists.",
+        "message": "New drawing added.",
     }

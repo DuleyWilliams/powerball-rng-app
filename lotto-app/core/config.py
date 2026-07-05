@@ -26,8 +26,22 @@ SCORE_SUM_MAX: int = 220
 BALANCED_ODD_COUNTS: frozenset[int] = frozenset({2, 3})
 BALANCED_LOW_COUNTS: frozenset[int] = frozenset({2, 3})
 
-# Data file lives at lotto-app/numbers.json regardless of the caller's cwd.
+# Data files live under lotto-app/ regardless of the caller's cwd.
+# numbers.json is now an export/backup snapshot; database.db is primary.
 DATA_FILE: Path = Path(__file__).resolve().parent.parent / "numbers.json"
+DB_FILE: Path = Path(__file__).resolve().parent.parent / "database.db"
 
-# TN Powerball data source
+# TN Powerball data source (daily latest-draw scraper)
 POWERBALL_URL: str = "https://www.powerball.com/draw-result?oc=tn"
+
+# NY State Open Data (Socrata) — official historical Powerball drawings
+# since 2010. Rows predating the Oct 2015 format change (white balls
+# 1-59, powerball 1-35) are naturally rejected by WHITE_BALL_MAX /
+# POWERBALL_MAX above during validation, since they describe a
+# different game format than the one this app models.
+NY_OPEN_DATA_URL: str = "https://data.ny.gov/resource/d6yy-54nr.json"
+
+# Draw source labels, recorded on every row for provenance/auditing.
+SOURCE_LEGACY_JSON: str = "legacy_json"
+SOURCE_NY_OPEN_DATA: str = "data.ny.gov"
+SOURCE_TN_SCRAPER: str = "powerball.com"
