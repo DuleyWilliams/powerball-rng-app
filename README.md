@@ -17,6 +17,7 @@ A data engineering, statistics, and software engineering portfolio platform that
 - Ticket scoring engine
 - Combinatorial condensation
 - Plotly visual analytics
+- Statistical analysis engine (chi-square goodness-of-fit, confidence intervals, distribution tables)
 - CSV export
 
 ## Architecture
@@ -55,6 +56,7 @@ lotto-app/
 │   ├── scoring.py             # ticket scoring
 │   ├── gaps.py                 # number gap analysis
 │   ├── condensation.py         # combinatorial condensation
+│   ├── statistics.py           # chi-square, confidence intervals, distribution analysis — see below
 │   └── charts.py               # Plotly chart builders
 ├── services/
 │   ├── ticket_service.py       # ticket generation + validity filtering
@@ -116,6 +118,24 @@ Pulls the full Powerball drawing history from the [NY State Open Data Socrata da
 
 As of the last run: **1789 rows** imported (2010-02-03 through the present), with pre-2015 draws correctly rejected by range validation.
 
+## Statistics engine
+
+`analytics_engine/statistics.py` replaces raw frequency counting with a proper statistical layer. **Everything in it is historical analysis only — Powerball drawings are independent random events, and nothing here predicts, forecasts, or improves the odds of a future draw.** The Streamlit dashboard's "Statistical Analysis" section repeats this warning directly above the numbers.
+
+What it computes, all against the current draw history:
+
+- **Frequency distributions** for every white ball (1-69) and every Powerball (1-26): observed count, expected count under a uniform draw, and a 95% confidence interval on the observed proportion (normal/Wald approximation).
+- **Chi-square goodness-of-fit** for white balls and for Powerballs — tests whether the observed frequencies are consistent with uniform randomness, via `scipy.stats.chisquare`. Reports the statistic, degrees of freedom, p-value, and a plain-English interpretation at alpha=0.05.
+- **White ball sum distribution** — mean, median, standard deviation, and a 95% confidence interval on the mean, plus a bucketed histogram (20-point buckets by default) spanning the theoretical min/max possible sum (15-335).
+- **Odd/even and low/high distributions** — observed counts of each 0-5 split, compared against the *correct* expected counts computed via the hypergeometric distribution (`scipy.stats.hypergeom`), not a naive binomial(5, 0.5) assumption — white balls split 35 odd/34 even and 35 low/34 high out of 69, and draws are without replacement, so hypergeometric is the statistically correct model.
+- **Frequency by number range/decade** — observed vs. expected counts bucketed into ranges of 10 (1-10, 11-20, ..., 61-69).
+
+### Assumptions
+
+- Confidence intervals use the normal approximation to the binomial (Wald interval), which is standard and adequate here given the large sample sizes involved (not the more conservative Wilson interval).
+- Chi-square goodness-of-fit assumes expected cell counts are large enough for the chi-square approximation to hold (a common rule of thumb is >=5 per cell); with the current dataset (~1789 draws), expected counts per white ball (~130) and per Powerball (~69) are comfortably above that threshold.
+- Odd/even and low/high expected distributions assume each drawing is 5 numbers drawn without replacement from a uniform 69-number pool — the correct null hypothesis for "the game is unbiased," which is exactly what these tests are checking, not assuming.
+
 ## Technologies
 
 ### Frontend (future production client)
@@ -129,6 +149,7 @@ As of the last run: **1789 rows** imported (2010-02-03 through the present), wit
 - SQLite
 - Pandas
 - Plotly
+- SciPy
 - Requests
 - BeautifulSoup
 - pytest
@@ -158,7 +179,6 @@ pytest
 ## Roadmap
 
 - PostgreSQL storage (production-grade successor to SQLite)
-- Statistical rigor layer (significance testing, confidence bands) on top of the analytics engine
 - Expanded visualizations (heatmaps, trend-over-time)
 - FastAPI layer exposing the application services
 - React production frontend consuming the API

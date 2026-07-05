@@ -16,11 +16,22 @@ from analytics_engine.charts import (
     hot_numbers_chart,
     cold_numbers_chart,
     powerball_chart,
+    sum_distribution_chart,
 )
 from analytics_engine.condensation import condense_tickets
 from analytics_engine.gaps import (
     white_ball_gap_analysis,
     powerball_gap_analysis,
+)
+from analytics_engine.statistics import (
+    expected_white_ball_frequency,
+    expected_powerball_frequency,
+    white_ball_chi_square,
+    powerball_chi_square,
+    white_ball_sum_statistics,
+    odd_even_distribution,
+    low_high_distribution,
+    frequency_by_range,
 )
 
 
@@ -273,3 +284,95 @@ if draws:
         )
 else:
     st.warning("No chart data available yet.")
+
+st.divider()
+
+st.header("Statistical Analysis")
+st.warning(
+    "Historical analysis only. Powerball drawings are independent random events — "
+    "nothing in this section predicts or improves the odds of future draws."
+)
+
+if draws:
+    st.metric("Total Sample Size (Draws)", len(draws))
+
+    expected_col1, expected_col2 = st.columns(2)
+    expected_col1.metric("Expected Frequency per White Ball", f"{expected_white_ball_frequency(draws):.2f}")
+    expected_col2.metric("Expected Frequency per Powerball", f"{expected_powerball_frequency(draws):.2f}")
+
+    st.subheader("Chi-Square Goodness-of-Fit")
+    st.caption(
+        "Tests whether historical frequencies are consistent with a uniform random "
+        "draw. A significant result describes the sample collected so far — it does "
+        "not predict future draws."
+    )
+
+    white_chi = white_ball_chi_square(draws)
+    pb_chi = powerball_chi_square(draws)
+
+    chi_square_df = pd.DataFrame([
+        {
+            "Pool": "White Balls",
+            "Chi-Square Statistic": round(white_chi.statistic, 3),
+            "Degrees of Freedom": white_chi.degrees_of_freedom,
+            "p-value": round(white_chi.p_value, 4),
+            "Significant (alpha=0.05)": white_chi.is_significant,
+        },
+        {
+            "Pool": "Powerball",
+            "Chi-Square Statistic": round(pb_chi.statistic, 3),
+            "Degrees of Freedom": pb_chi.degrees_of_freedom,
+            "p-value": round(pb_chi.p_value, 4),
+            "Significant (alpha=0.05)": pb_chi.is_significant,
+        },
+    ])
+    st.dataframe(chi_square_df, width="stretch")
+    st.caption(white_chi.interpretation)
+    st.caption(pb_chi.interpretation)
+
+    st.subheader("White Ball Sum Distribution")
+
+    sum_stats = white_ball_sum_statistics(draws)
+
+    sum_col1, sum_col2, sum_col3 = st.columns(3)
+    sum_col1.metric("Mean Sum", f"{sum_stats.mean:.1f}")
+    sum_col2.metric("Median Sum", f"{sum_stats.median:.1f}")
+    sum_col3.metric("Std Dev", f"{sum_stats.std_dev:.1f}")
+    st.caption(
+        f"95% confidence interval for the mean sum: "
+        f"{sum_stats.confidence_interval_95[0]:.1f} - {sum_stats.confidence_interval_95[1]:.1f}"
+    )
+
+    st.plotly_chart(sum_distribution_chart(sum_stats), width="stretch")
+
+    dist_col1, dist_col2 = st.columns(2)
+
+    with dist_col1:
+        st.subheader("Odd / Even Distribution")
+        odd_even_df = pd.DataFrame([
+            {"Pattern": row.label, "Observed": row.observed_count, "Expected": round(row.expected_count, 2)}
+            for row in odd_even_distribution(draws)
+        ])
+        st.dataframe(odd_even_df, width="stretch")
+
+    with dist_col2:
+        st.subheader("Low / High Distribution")
+        low_high_df = pd.DataFrame([
+            {"Pattern": row.label, "Observed": row.observed_count, "Expected": round(row.expected_count, 2)}
+            for row in low_high_distribution(draws)
+        ])
+        st.dataframe(low_high_df, width="stretch")
+
+    st.subheader("Frequency by Number Range")
+    range_df = pd.DataFrame([
+        {
+            "Range": row.label,
+            "Observed": row.observed_count,
+            "Expected": round(row.expected_count, 2),
+            "Deviation": round(row.deviation, 2),
+        }
+        for row in frequency_by_range(draws)
+    ])
+    st.dataframe(range_df, width="stretch")
+else:
+    st.warning("No statistical data available yet.")
