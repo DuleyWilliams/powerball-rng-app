@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 from data.migration import migrate_json_to_sqlite
-from data.repository import get_all_draws, database_statistics
+from data.repository import get_all_draws, database_statistics, get_recent_dated_draws
 from services.ticket_service import generate_tickets, filter_tickets
 from services.update_service import update_numbers
 from analytics_engine.frequency import (
@@ -17,6 +17,15 @@ from analytics_engine.charts import (
     cold_numbers_chart,
     powerball_chart,
     sum_distribution_chart,
+    white_ball_frequency_heatmap,
+    powerball_frequency_heatmap,
+    white_ball_gap_chart,
+    powerball_gap_chart,
+    odd_even_distribution_chart,
+    low_high_distribution_chart,
+    range_frequency_chart,
+    recent_draws_timeline_chart,
+    pair_frequency_heatmap,
 )
 from analytics_engine.condensation import condense_tickets
 from analytics_engine.gaps import (
@@ -376,3 +385,71 @@ if draws:
     st.dataframe(range_df, width="stretch")
 else:
     st.warning("No statistical data available yet.")
+
+st.divider()
+
+st.header("Visualization Dashboard")
+st.warning(
+    "These charts summarize historical drawing data only. They do not "
+    "predict or improve the odds of future Powerball drawings."
+)
+
+if draws:
+    st.subheader("White Ball Frequency Heatmap")
+    st.caption(
+        "Each cell is one white ball (1-69), shaded by how many times it has been "
+        "drawn historically. Uneven shading is expected random variation, not signal."
+    )
+    st.plotly_chart(white_ball_frequency_heatmap(draws), width="stretch")
+
+    st.subheader("Powerball Frequency Heatmap")
+    st.caption("Same idea as above, for the 26 Powerball numbers.")
+    st.plotly_chart(powerball_frequency_heatmap(draws), width="stretch")
+
+    gap_chart_col1, gap_chart_col2 = st.columns(2)
+
+    with gap_chart_col1:
+        st.subheader("White Ball Gap Distribution")
+        st.caption("Drawings since each white ball last appeared, in number order.")
+        st.plotly_chart(white_ball_gap_chart(draws), width="stretch")
+
+    with gap_chart_col2:
+        st.subheader("Powerball Gap Distribution")
+        st.caption("Drawings since each Powerball last appeared, in number order.")
+        st.plotly_chart(powerball_gap_chart(draws), width="stretch")
+
+    st.caption(
+        "White Ball Sum Distribution: shown above in the Statistical Analysis section "
+        "(with mean and 95% confidence interval) — not repeated here to avoid duplicate charts."
+    )
+
+    dist_chart_col1, dist_chart_col2 = st.columns(2)
+
+    with dist_chart_col1:
+        st.subheader("Odd / Even Distribution")
+        st.caption("Observed vs. statistically expected split of odd/even numbers per draw.")
+        st.plotly_chart(odd_even_distribution_chart(draws), width="stretch")
+
+    with dist_chart_col2:
+        st.subheader("Low / High Distribution")
+        st.caption("Observed vs. statistically expected split of low (<=35) / high (>35) numbers per draw.")
+        st.plotly_chart(low_high_distribution_chart(draws), width="stretch")
+
+    st.subheader("Frequency by Number Range")
+    st.caption("Observed vs. expected white ball frequency, grouped into ranges of 10.")
+    st.plotly_chart(range_frequency_chart(draws), width="stretch")
+
+    st.subheader("Recent Draw Timeline")
+    st.caption("White ball sum over time for the most recent dated draws, colored by Powerball.")
+
+    recent_dated_draws = get_recent_dated_draws(limit=50)
+    if recent_dated_draws:
+        st.plotly_chart(recent_draws_timeline_chart(recent_dated_draws), width="stretch")
+    else:
+        st.info("No dated draws available yet for a timeline.")
+
+    st.subheader("White Ball Pair Frequency Heatmap")
+    st.caption("How often each pair of white balls has appeared together historically. Hover a cell for the exact count.")
+    st.plotly_chart(pair_frequency_heatmap(draws), width="stretch")
+else:
+    st.warning("No visualization data available yet.")

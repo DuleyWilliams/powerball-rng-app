@@ -16,7 +16,7 @@ A data engineering, statistics, and software engineering portfolio platform that
 - Number gap analysis
 - Ticket scoring engine
 - Combinatorial condensation
-- Plotly visual analytics
+- Plotly visual analytics, including frequency heatmaps, gap/sum/distribution charts, a recent-draw timeline, and a pair-frequency heatmap
 - Statistical analysis engine (chi-square goodness-of-fit, confidence intervals, distribution tables)
 - CSV export
 
@@ -36,14 +36,18 @@ lotto-app/
 ├── app.py                    # Streamlit UI — presentation only
 ├── fetch_tn_powerball.py     # CLI shim for the daily update GitHub Action
 ├── import_history.py         # CLI: bulk historical import (NY Open Data -> SQLite)
+├── cron_update.py             # IONOS cron updater — no Streamlit/Plotly/SciPy/Pandas, see below
+├── run_cron_update.sh          # shell entry point for the IONOS Cron Job Manager
+├── requirements-cron.txt       # minimal deps for cron_update.py only
 ├── database.db                # SQLite database (gitignored — regenerated, see below)
 ├── numbers.json               # Export/backup snapshot only, not read by the app
+├── logs/                      # cron_update.py output (gitignored, created at runtime)
 ├── core/
 │   ├── config.py             # centralized constants (ranges, thresholds, paths, source labels)
 │   └── patterns.py           # shared ticket-pattern analysis (odd/even, low/high, sum, consecutive)
 ├── data/
 │   ├── database.py           # SQLite schema + connection handling (the only SQL in the app)
-│   ├── repository.py         # get_all_draws / get_latest_draw / insert_draw / draw_exists / database_statistics
+│   ├── repository.py         # get_all_draws / get_latest_draw / get_recent_dated_draws / insert_draw / draw_exists / database_statistics
 │   ├── migration.py          # idempotent numbers.json -> SQLite migration
 │   └── json_export.py        # SQLite -> numbers.json backup export
 ├── etl/
@@ -136,6 +140,29 @@ What it computes, all against the current draw history:
 - Chi-square goodness-of-fit assumes expected cell counts are large enough for the chi-square approximation to hold (a common rule of thumb is >=5 per cell); with the current dataset (~1789 draws), expected counts per white ball (~130) and per Powerball (~69) are comfortably above that threshold.
 - Odd/even and low/high expected distributions assume each drawing is 5 numbers drawn without replacement from a uniform 69-number pool — the correct null hypothesis for "the game is unbiased," which is exactly what these tests are checking, not assuming.
 
+## Visualization dashboard
+
+The Streamlit dashboard's "Visualization Dashboard" section turns the statistics/analytics engines into charts. **Like the rest of this app, every chart here summarizes historical data only — none of them predict or improve the odds of a future drawing.** The section repeats that warning above the charts.
+
+All chart-building functions live in `analytics_engine/charts.py` — `app.py` only calls them and adds `st.subheader`/`st.caption` text; no calculation happens in the UI layer.
+
+| Chart | What it shows | Built from |
+|---|---|---|
+| White ball / Powerball frequency heatmap | Each number shaded by historical draw count, laid out in a fixed grid (7 columns for white balls, 13 for Powerball) | `analytics_engine.statistics` frequency distributions |
+| White ball / Powerball gap distribution | Drawings since each number last appeared, in number order (not sorted by gap, so the x-axis stays readable) | `analytics_engine.gaps` |
+| White ball sum distribution (upgraded) | Histogram of the 5-white-ball sum per draw, now with a dashed mean line and a shaded 95% confidence band | `analytics_engine.statistics.white_ball_sum_statistics` — shown once, in the Statistical Analysis section, not duplicated here |
+| Odd/even & Low/high distribution | Grouped bars comparing observed counts to the hypergeometric-expected counts | `analytics_engine.statistics` |
+| Frequency by number range | Grouped bars, observed vs. expected, bucketed into ranges of 10 | `analytics_engine.statistics.frequency_by_range` |
+| Recent draw timeline | White ball sum over time for the most recent 50 *dated* draws, colored by Powerball | `data.repository.get_recent_dated_draws` (new — see limitations) |
+| White ball pair frequency heatmap | Full 69x69 matrix of how often each pair of white balls has appeared together | `analytics_engine.frequency.repeated_pairs` |
+
+### Limitations
+
+- **Recent draw timeline requires a known draw date.** The existing `Draw` shape (`[ball1..ball5, powerball]`) used everywhere else in the app has no date field, so `data/repository.py` gained one new read-only function, `get_recent_dated_draws()`, to fetch dated rows for this chart specifically. This is not a schema change — it reads the same `draws` table — and undated legacy/scraper rows are simply excluded from the timeline (a timeline of unknown-order points wouldn't mean anything).
+- **The pair-frequency heatmap shows all 69x69 combinations.** A true network/node-link diagram was considered but would add real clutter and a heavier rendering cost for the same information; a heatmap reads cleanly at this size and every cell is still hoverable for the exact count.
+- **Frequency heatmaps use a fixed grid layout**, not a literal Powerball ticket layout — the goal is readability (one row per visual chunk of numbers), not a physical reproduction.
+- The sum distribution chart intentionally appears only once (Statistical Analysis section) rather than being duplicated in the Visualization Dashboard — Streamlit rejects two identical chart elements on the same page, and repeating identical content added no value.
+
 ## Technologies
 
 ### Frontend (future production client)
@@ -176,10 +203,72 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+## IONOS cron deployment
+
+The Streamlit app isn't available on IONOS shared hosting, but the daily drawing update doesn't need it. `cron_update.py` is a standalone, dependency-light script that runs the exact same fetch → validate → insert-if-new → export pipeline as the Streamlit "Fetch Latest TN Powerball" button (both call `services.update_service.update_numbers()`), without importing Streamlit, Plotly, SciPy, Pandas, React, or `app.py`.
+
+Confirmed target environment: Debian GNU/Linux, Python 3.9.2, pip 20.3.4, SQLite 3.34.1, IONOS Cron Job Manager.
+
+### Deployment commands
+
+```bash
+# On the IONOS server, inside the cloned repo:
+cd /kunden/homepages/8/d230686207/htdocs/powerball-cron/powerball-rng-app/lotto-app
+
+# Optional but recommended: an isolated virtualenv so cron doesn't depend
+# on whatever python3 happens to resolve to system-wide.
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -r requirements-cron.txt
+
+# Make sure the entry point is executable (git preserves this bit on
+# commit, but set it explicitly after a fresh clone just in case):
+chmod +x run_cron_update.sh cron_update.py
+
+# One-time sanity check before wiring up cron:
+./run_cron_update.sh --dry-run
+echo "exit code: $?"        # expect 0
+cat logs/cron_update.log    # expect one JSON line confirming the dry run
+```
+
+Add this exact command as the IONOS Cron Job Manager's job:
+
+```
+/kunden/homepages/8/d230686207/htdocs/powerball-cron/powerball-rng-app/lotto-app/run_cron_update.sh
+```
+
+`run_cron_update.sh` prefers `.venv/bin/python3` if that virtualenv exists next to it, and falls back to whatever `python3` is on `PATH` otherwise — so the venv step above is optional, not required.
+
+### How it works
+
+- **`cron_update.py`** resolves every path (`logs/`, `database.db`, `numbers.json`) from `Path(__file__).resolve().parent`, so it runs correctly regardless of cron's working directory.
+- **Locking**: an exclusive, non-blocking `fcntl.flock()` on `logs/cron_update.lock` prevents two runs from overlapping if a previous invocation is still running when cron fires again. The lock is released automatically when the process exits, even on error.
+- **Logging**: structured JSON lines (timestamp, level, message, and a stack trace field on errors) appended to `logs/cron_update.log` via Python's `logging` module. `run_cron_update.sh` also appends the raw stdout/stderr of the whole invocation to the same file, as a catch-all for failures that happen before Python's own logger is even configured (e.g. `python3` missing, a broken import).
+- **Exit codes**: `0` for a successful insert *or* a no-new-drawing result (both are a healthy run), `1` for any fetch/validation/database failure, `2` if another run already holds the lock.
+- **`--dry-run`**: verifies path resolution, locking, and logging without fetching or writing anything. Used for the deployment sanity check above and by the automated tests.
+
+### Dependencies
+
+`requirements-cron.txt` — deliberately just what `services.update_service` needs:
+
+```
+requests
+beautifulsoup4
+```
+
+Everything else (SQLite access, the ETL pipeline, JSON export) is pure standard library. Streamlit/Plotly/SciPy/Pandas are never imported by this path, keeping the file count and install footprint small for IONOS's shared-hosting quota.
+
+### Python 3.9 compatibility note
+
+While building this, `services/update_service.py` was found to use `X | None` union-type syntax (PEP 604), which requires Python 3.10+ at runtime — it would have raised `TypeError` on import under Python 3.9.2. Since this module sits on the cron import path, it was changed to `typing.Optional[X]`, which is correct on every Python version this project targets. This is a pure type-annotation change with no behavior difference on any Python version — it does not affect the Streamlit app.
+
+### Testing note
+
+`tests/test_cron_update.py` covers a successful update, no-new-draw, fetch failure, lock contention, exit codes, and running from an unrelated working directory — all in-process or via a `--dry-run` subprocess, with no live network calls. Verified on a real Linux environment (the target IONOS host runs Debian; local development is Windows, so this suite was run and confirmed passing under WSL Ubuntu, including a genuine cross-process `fcntl.flock()` contention check with a second real process holding the lock).
+
 ## Roadmap
 
 - PostgreSQL storage (production-grade successor to SQLite)
-- Expanded visualizations (heatmaps, trend-over-time)
 - FastAPI layer exposing the application services
 - React production frontend consuming the API
 - CI running the test suite

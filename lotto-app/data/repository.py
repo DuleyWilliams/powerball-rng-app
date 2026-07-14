@@ -24,6 +24,12 @@ class DatabaseStatistics:
     last_updated_at: Optional[str]
 
 
+@dataclass(frozen=True)
+class DatedDraw:
+    draw_date: date
+    balls: Draw
+
+
 def _parse_date(value: Optional[str]) -> Optional[date]:
     return date.fromisoformat(value) if value else None
 
@@ -50,6 +56,34 @@ def get_all_draws() -> list[Draw]:
 def get_latest_draw() -> Optional[Draw]:
     draws = get_all_draws()
     return draws[0] if draws else None
+
+
+def get_recent_dated_draws(limit: int = 50) -> list[DatedDraw]:
+    """The most recent draws that have a known draw_date, oldest first
+    (ready for a left-to-right timeline chart). Undated legacy/scraper
+    rows are excluded — a timeline is meaningless without a real date.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT draw_date, ball1, ball2, ball3, ball4, ball5, powerball
+            FROM draws
+            WHERE draw_date IS NOT NULL
+            ORDER BY draw_date DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    dated_draws = [
+        DatedDraw(
+            draw_date=_parse_date(row["draw_date"]),
+            balls=[row["ball1"], row["ball2"], row["ball3"], row["ball4"], row["ball5"], row["powerball"]],
+        )
+        for row in rows
+    ]
+
+    return list(reversed(dated_draws))
 
 
 def insert_draw(
