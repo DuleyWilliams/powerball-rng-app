@@ -1,0 +1,5 @@
+# Minimal dependency set for cron_update.py only.
+# Deliberately excludes streamlit, plotly, scipy, pandas — see README
+# "IONOS cron deployment" for why.
+requests
+beautifulsoup4

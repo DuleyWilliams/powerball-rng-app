@@ -1,6 +1,12 @@
-"""Application service: fetch and persist the latest TN Powerball drawing."""
+"""Application service: fetch and persist the latest TN Powerball drawing.
+
+Also used directly by the IONOS cron updater (cron_update.py) — keep this
+module importable on Python 3.9 (no bare `X | None` union syntax) and free
+of Streamlit/Plotly/SciPy/Pandas imports.
+"""
 
 import re
+from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -22,7 +28,7 @@ def fetch_powerball_page() -> str:
     return response.text
 
 
-def is_valid_powerball_draw(draw: Draw | None) -> bool:
+def is_valid_powerball_draw(draw: Optional[Draw]) -> bool:
     if not draw or len(draw) != 6:
         return False
 
@@ -41,7 +47,7 @@ def is_valid_powerball_draw(draw: Draw | None) -> bool:
     return True
 
 
-def extract_numbers_from_text(text: str) -> Draw | None:
+def extract_numbers_from_text(text: str) -> Optional[Draw]:
     """
     Attempts to extract only the actual draw numbers from the Powerball page.
     Filters out dates, multipliers, prize numbers, and repeated bad matches.

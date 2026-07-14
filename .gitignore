@@ -21,8 +21,12 @@ __pycache__/
 *.pyd
 .Python
 .venv/
+.venv-wsl/
 venv/
 env/
+
+# cron updater runtime artifacts (logs, lock file)
+lotto-app/logs/
 
 # Streamlit
 .streamlit/
