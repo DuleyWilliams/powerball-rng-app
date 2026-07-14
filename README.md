@@ -266,6 +266,12 @@ While building this, `services/update_service.py` was found to use `X | None` un
 
 `tests/test_cron_update.py` covers a successful update, no-new-draw, fetch failure, lock contention, exit codes, and running from an unrelated working directory — all in-process or via a `--dry-run` subprocess, with no live network calls. Verified on a real Linux environment (the target IONOS host runs Debian; local development is Windows, so this suite was run and confirmed passing under WSL Ubuntu, including a genuine cross-process `fcntl.flock()` contention check with a second real process holding the lock).
 
+### HTTP trigger (PHP)
+
+IONOS's HTTP-GET-based cron system can't invoke a shell script directly, so `deployment/powerball_update.php` is a small, token-gated PHP endpoint that does nothing but authenticate the request and run `run_cron_update.sh` above by its absolute path, then report the result as JSON. It never touches the Python updater or Streamlit directly, and it does not weaken the existing `Require all denied` protection on `/powerball-cron` — that stays HTTP-unreachable; the PHP script invokes the shell script as a local OS process, not over HTTP.
+
+Full deployment instructions, the exact cron URL, and security limitations are in the PHP file's own docblock and were provided in full when this endpoint was added — see `deployment/powerball_update.php` and `deployment/powerball_update.secret.php.example`.
+
 ## Roadmap
 
 - PostgreSQL storage (production-grade successor to SQLite)

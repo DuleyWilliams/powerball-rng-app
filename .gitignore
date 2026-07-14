@@ -28,6 +28,9 @@ env/
 # cron updater runtime artifacts (logs, lock file)
 lotto-app/logs/
 
+# PHP cron trigger secret — real token must never be committed
+deployment/powerball_update.secret.php
+
 # Streamlit
 .streamlit/
 .streamlit/secrets.toml
