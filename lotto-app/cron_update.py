@@ -10,9 +10,14 @@ Deliberately dependency-light: only requests/beautifulsoup4 plus the
 stdlib. Never imports streamlit, plotly, scipy, pandas, or app.py — see
 requirements-cron.txt.
 
+After a successful database update, also syncs lotto-app/numbers.json to
+GitHub (services.github_sync_service) via the REST Contents API — no
+git/subprocess/SSH involved.
+
 Exit codes:
     0 - success (new drawing inserted), no new drawing, or --dry-run
-    1 - failure (fetch/validation/database error)
+    1 - failure (fetch/validation/database error, or GitHub sync failure
+        after a successful database update)
     2 - another run already holds the lock
 """
 
@@ -34,6 +39,7 @@ LOG_FILE = LOG_DIR / "cron_update.log"
 LOCK_FILE = LOG_DIR / "cron_update.lock"
 
 from services.update_service import update_numbers  # noqa: E402  (needs sys.path set up first)
+from services.github_sync_service import sync_numbers_json, GithubSyncError  # noqa: E402
 
 
 class LockHeldError(Exception):
@@ -69,6 +75,16 @@ def _build_logger() -> logging.Logger:
     handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
     handler.setFormatter(_JsonLogFormatter())
     logger.addHandler(handler)
+
+    # services.* modules (e.g. github_sync_service) log via their own
+    # __name__-based logger, not "cron_update" — attach the same handler
+    # so their structured messages land in the same cron log file.
+    services_logger = logging.getLogger("services")
+    services_logger.setLevel(logging.INFO)
+    for handler_ in list(services_logger.handlers):
+        services_logger.removeHandler(handler_)
+        handler_.close()
+    services_logger.addHandler(handler)
 
     return logger
 
@@ -114,6 +130,20 @@ def run(logger: logging.Logger, dry_run: bool = False) -> int:
         logger.info("New drawing inserted: %s", result["latest"])
     else:
         logger.info("No new drawing: %s", result["message"])
+
+    # Sync runs after every successful database update, whether or not a
+    # new drawing was inserted — sync_numbers_json() itself detects when
+    # GitHub is already current and no-ops in that case.
+    try:
+        sync_result = sync_numbers_json()
+    except GithubSyncError:
+        # sync_numbers_json() already logged github_sync_failed with a
+        # safe (token-free) message; the database update itself
+        # succeeded, so this is a partial failure, not a full one.
+        return 1
+
+    if sync_result.changed:
+        logger.info("GitHub backup updated: commit %s", sync_result.commit_sha)
 
     return 0
 

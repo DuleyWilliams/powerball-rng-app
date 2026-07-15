@@ -31,6 +31,9 @@ lotto-app/logs/
 # PHP cron trigger secret — real token must never be committed
 deployment/powerball_update.secret.php
 
+# GitHub sync fine-grained PAT — real token must never be committed
+lotto-app/github_sync.secret.json
+
 # Streamlit
 .streamlit/
 .streamlit/secrets.toml

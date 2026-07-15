@@ -12,6 +12,7 @@ import pytest
 fcntl = pytest.importorskip("fcntl")
 
 import cron_update
+from services.github_sync_service import GithubSyncError, GithubSyncResult
 
 
 def _use_temp_paths(tmp_path, monkeypatch):
@@ -26,11 +27,20 @@ def _read_log_lines(log_file: Path) -> list[dict]:
     return [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _stub_update_numbers(monkeypatch, *, updated: bool, message: str):
+    monkeypatch.setattr(cron_update, "update_numbers", lambda: {
+        "updated": updated, "latest": [1, 2, 3, 4, 5, 6], "message": message,
+    })
+
+
+def _stub_sync_success(monkeypatch, *, changed: bool = False, commit_sha=None):
+    monkeypatch.setattr(cron_update, "sync_numbers_json", lambda: GithubSyncResult(changed=changed, commit_sha=commit_sha))
+
+
 def test_successful_update_returns_exit_0_and_logs(tmp_path, monkeypatch):
     log_dir = _use_temp_paths(tmp_path, monkeypatch)
-    monkeypatch.setattr(cron_update, "update_numbers", lambda: {
-        "updated": True, "latest": [1, 2, 3, 4, 5, 6], "message": "New drawing added.",
-    })
+    _stub_update_numbers(monkeypatch, updated=True, message="New drawing added.")
+    _stub_sync_success(monkeypatch)
 
     exit_code = cron_update.main([])
 
@@ -42,9 +52,8 @@ def test_successful_update_returns_exit_0_and_logs(tmp_path, monkeypatch):
 
 def test_no_new_draw_returns_exit_0(tmp_path, monkeypatch):
     log_dir = _use_temp_paths(tmp_path, monkeypatch)
-    monkeypatch.setattr(cron_update, "update_numbers", lambda: {
-        "updated": False, "latest": [1, 2, 3, 4, 5, 6], "message": "Drawing already exists.",
-    })
+    _stub_update_numbers(monkeypatch, updated=False, message="Drawing already exists.")
+    _stub_sync_success(monkeypatch)
 
     exit_code = cron_update.main([])
 
@@ -99,15 +108,44 @@ def test_lock_contention_returns_exit_2(tmp_path, monkeypatch):
 
 def test_lock_is_released_after_a_run_so_a_later_run_can_proceed(tmp_path, monkeypatch):
     _use_temp_paths(tmp_path, monkeypatch)
-    monkeypatch.setattr(cron_update, "update_numbers", lambda: {
-        "updated": False, "latest": [1, 2, 3, 4, 5, 6], "message": "Drawing already exists.",
-    })
+    _stub_update_numbers(monkeypatch, updated=False, message="Drawing already exists.")
+    _stub_sync_success(monkeypatch)
 
     first = cron_update.main([])
     second = cron_update.main([])
 
     assert first == 0
     assert second == 0
+
+
+def test_github_sync_failure_after_successful_update_returns_exit_1(tmp_path, monkeypatch):
+    log_dir = _use_temp_paths(tmp_path, monkeypatch)
+    _stub_update_numbers(monkeypatch, updated=True, message="New drawing added.")
+
+    def _sync_boom():
+        raise GithubSyncError("GitHub PUT failed with status 500")
+
+    monkeypatch.setattr(cron_update, "sync_numbers_json", _sync_boom)
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 1
+    # The database update itself still succeeded and was logged as such —
+    # only the sync step failed.
+    lines = _read_log_lines(log_dir / "cron_update.log")
+    assert any("New drawing inserted" in line["message"] for line in lines)
+
+
+def test_github_sync_success_with_change_is_logged(tmp_path, monkeypatch):
+    log_dir = _use_temp_paths(tmp_path, monkeypatch)
+    _stub_update_numbers(monkeypatch, updated=True, message="New drawing added.")
+    _stub_sync_success(monkeypatch, changed=True, commit_sha="abc123")
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 0
+    lines = _read_log_lines(log_dir / "cron_update.log")
+    assert any("GitHub backup updated" in line["message"] and "abc123" in line["message"] for line in lines)
 
 
 def test_runs_from_unrelated_working_directory(tmp_path):

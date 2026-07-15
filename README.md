@@ -41,6 +41,7 @@ lotto-app/
 ├── requirements-cron.txt       # minimal deps for cron_update.py only
 ├── database.db                # SQLite database (gitignored — regenerated, see below)
 ├── numbers.json               # Export/backup snapshot only, not read by the app
+├── github_sync.secret.json.example  # committed placeholder — see "GitHub backup sync"
 ├── logs/                      # cron_update.py output (gitignored, created at runtime)
 ├── core/
 │   ├── config.py             # centralized constants (ranges, thresholds, paths, source labels)
@@ -64,7 +65,8 @@ lotto-app/
 │   └── charts.py               # Plotly chart builders
 ├── services/
 │   ├── ticket_service.py       # ticket generation + validity filtering
-│   └── update_service.py       # TN Powerball fetch/parse/update, routed through the ETL pipeline
+│   ├── update_service.py       # TN Powerball fetch/parse/update, routed through the ETL pipeline
+│   └── github_sync_service.py  # pushes numbers.json to GitHub via the REST Contents API
 └── tests/                      # pytest suite covering every layer above
 ```
 
@@ -271,6 +273,62 @@ While building this, `services/update_service.py` was found to use `X | None` un
 IONOS's HTTP-GET-based cron system can't invoke a shell script directly, so `deployment/powerball_update.php` is a small, token-gated PHP endpoint that does nothing but authenticate the request and run `run_cron_update.sh` above by its absolute path, then report the result as JSON. It never touches the Python updater or Streamlit directly, and it does not weaken the existing `Require all denied` protection on `/powerball-cron` — that stays HTTP-unreachable; the PHP script invokes the shell script as a local OS process, not over HTTP.
 
 Full deployment instructions, the exact cron URL, and security limitations are in the PHP file's own docblock and were provided in full when this endpoint was added — see `deployment/powerball_update.php` and `deployment/powerball_update.secret.php.example`.
+
+### GitHub backup sync
+
+After a successful database update, `cron_update.py` also pushes `lotto-app/numbers.json` to GitHub via `services/github_sync_service.py`, so the backup snapshot in the repo stays current even though it's generated on IONOS, not committed by a developer. This uses the GitHub REST **Contents API** directly over HTTPS (`requests`) — no `git`, git CLI, subprocess, SSH keys, or GitPython. It compares the remote file's decoded content against the local file first, and only creates a commit when they actually differ.
+
+If the database update succeeds but the GitHub sync fails, `cron_update.py` exits with code `1` (a partial failure) and logs `github_sync_failed` with a safe, token-free message — the database itself is never left in a bad state, only the GitHub backup falls behind until the next successful run retries it.
+
+#### Creating a fine-grained GitHub PAT
+
+1. On GitHub: **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+2. **Repository access**: select **Only select repositories** and choose only `DuleyWilliams/powerball-rng-app`. Do not grant access to any other repository.
+3. **Permissions**: under **Repository permissions**, set **Contents** to **Read and write**. Leave every other permission at **No access**.
+4. Set an expiration (GitHub recommends 90 days or less for fine-grained tokens) — see rotation procedure below.
+5. Generate the token and copy it immediately (`github_pat_...`) — GitHub only shows it once.
+
+#### Server secret-file setup
+
+```bash
+cd /kunden/homepages/8/d230686207/htdocs/powerball-cron/powerball-rng-app/lotto-app
+cp github_sync.secret.json.example github_sync.secret.json
+nano github_sync.secret.json   # paste the real token in place of the placeholder
+chmod 600 github_sync.secret.json
+```
+
+Exact content template (`github_sync.secret.json`):
+
+```json
+{
+  "token": "github_pat_REPLACE_WITH_A_REAL_FINE_GRAINED_TOKEN",
+  "owner": "DuleyWilliams",
+  "repo": "powerball-rng-app",
+  "branch": "main"
+}
+```
+
+This file is gitignored — it must never be committed. `github_sync.secret.json.example` (committed, no real token) documents the expected shape.
+
+#### Token rotation procedure
+
+1. Generate a new fine-grained token on GitHub (same steps as above).
+2. On the server, edit `lotto-app/github_sync.secret.json` and replace the `token` value with the new one. No code changes or restarts needed — `cron_update.py` reads the file fresh on every run.
+3. On GitHub, revoke the old token (**Settings → Developer settings → Personal access tokens → Fine-grained tokens** → find it → **Delete**).
+4. Run the manual test command below to confirm the new token works before the next scheduled cron run.
+
+#### Manual sync test command
+
+```bash
+cd /kunden/homepages/8/d230686207/htdocs/powerball-cron/powerball-rng-app/lotto-app
+.venv/bin/python3 -c "
+from services.github_sync_service import sync_numbers_json
+result = sync_numbers_json()
+print(result)
+"
+```
+
+Expect `GithubSyncResult(changed=False, commit_sha=None)` if the repo is already current, or `GithubSyncResult(changed=True, commit_sha='...')` after a real push. A `GithubSyncError` means the token, permissions, or network need attention — its message is always safe to read/share, since it never includes the token.
 
 ## Roadmap
 
