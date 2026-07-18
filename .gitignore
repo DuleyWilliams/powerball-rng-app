@@ -28,6 +28,11 @@ env/
 # cron updater runtime artifacts (logs, lock file)
 lotto-app/logs/
 
+# Private SQLite snapshots (IONOS-only disaster recovery) — never synced
+# to GitHub, never committed. lotto-app/backups/ (the portable, synced
+# backup) is intentionally NOT listed here — it's tracked like numbers.json.
+lotto-app/private_backups/
+
 # PHP cron trigger secret — real token must never be committed
 deployment/powerball_update.secret.php
 
