@@ -12,6 +12,7 @@ import pytest
 fcntl = pytest.importorskip("fcntl")
 
 import cron_update
+from core.config import NUMBERS_JSON_GITHUB_PATH, DRAWS_BACKUP_GITHUB_PATH, BACKUP_MANIFEST_GITHUB_PATH
 from services.github_sync_service import GithubSyncError, GithubSyncResult
 
 
@@ -27,20 +28,55 @@ def _read_log_lines(log_file: Path) -> list[dict]:
     return [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _stub_update_numbers(monkeypatch, *, updated: bool, message: str):
+def _stub_update_numbers(monkeypatch, *, updated: bool, message: str = "ok"):
     monkeypatch.setattr(cron_update, "update_numbers", lambda: {
         "updated": updated, "latest": [1, 2, 3, 4, 5, 6], "message": message,
     })
 
 
-def _stub_sync_success(monkeypatch, *, changed: bool = False, commit_sha=None):
-    monkeypatch.setattr(cron_update, "sync_numbers_json", lambda: GithubSyncResult(changed=changed, commit_sha=commit_sha))
+def _stub_export_backup(monkeypatch, *, fails: bool = False):
+    if fails:
+        def _boom():
+            raise RuntimeError("export failed")
+        monkeypatch.setattr(cron_update, "export_backup", _boom)
+    else:
+        monkeypatch.setattr(cron_update, "export_backup", lambda: None)
+
+
+def _stub_snapshot(monkeypatch, *, fails: bool = False):
+    if fails:
+        def _boom():
+            raise RuntimeError("snapshot failed")
+        monkeypatch.setattr(cron_update, "create_and_rotate_snapshot", _boom)
+    else:
+        monkeypatch.setattr(cron_update, "create_and_rotate_snapshot", lambda: (Path("database-20260101.sqlite3"), []))
+
+
+def _stub_sync_file(monkeypatch, *, changed_paths=(), failing_paths=()):
+    """changed_paths: github paths that should report changed=True.
+    failing_paths: github paths that should raise GithubSyncError.
+    Anything else reports changed=False (already current).
+    """
+    def _fake_sync_file(local_path, github_path, commit_message):
+        if github_path in failing_paths:
+            raise GithubSyncError(f"GitHub PUT failed with status 500 for {github_path}")
+        if github_path in changed_paths:
+            return GithubSyncResult(changed=True, commit_sha=f"commit-{github_path}")
+        return GithubSyncResult(changed=False)
+
+    monkeypatch.setattr(cron_update, "sync_file", _fake_sync_file)
+
+
+def _default_stubs(monkeypatch, *, updated=True, changed_paths=(), failing_paths=(), export_fails=False, snapshot_fails=False):
+    _stub_update_numbers(monkeypatch, updated=updated, message="New drawing added." if updated else "Drawing already exists.")
+    _stub_snapshot(monkeypatch, fails=snapshot_fails)
+    _stub_export_backup(monkeypatch, fails=export_fails)
+    _stub_sync_file(monkeypatch, changed_paths=changed_paths, failing_paths=failing_paths)
 
 
 def test_successful_update_returns_exit_0_and_logs(tmp_path, monkeypatch):
     log_dir = _use_temp_paths(tmp_path, monkeypatch)
-    _stub_update_numbers(monkeypatch, updated=True, message="New drawing added.")
-    _stub_sync_success(monkeypatch)
+    _default_stubs(monkeypatch, updated=True)
 
     exit_code = cron_update.main([])
 
@@ -52,8 +88,7 @@ def test_successful_update_returns_exit_0_and_logs(tmp_path, monkeypatch):
 
 def test_no_new_draw_returns_exit_0(tmp_path, monkeypatch):
     log_dir = _use_temp_paths(tmp_path, monkeypatch)
-    _stub_update_numbers(monkeypatch, updated=False, message="Drawing already exists.")
-    _stub_sync_success(monkeypatch)
+    _default_stubs(monkeypatch, updated=False)
 
     exit_code = cron_update.main([])
 
@@ -108,8 +143,7 @@ def test_lock_contention_returns_exit_2(tmp_path, monkeypatch):
 
 def test_lock_is_released_after_a_run_so_a_later_run_can_proceed(tmp_path, monkeypatch):
     _use_temp_paths(tmp_path, monkeypatch)
-    _stub_update_numbers(monkeypatch, updated=False, message="Drawing already exists.")
-    _stub_sync_success(monkeypatch)
+    _default_stubs(monkeypatch, updated=False)
 
     first = cron_update.main([])
     second = cron_update.main([])
@@ -118,34 +152,142 @@ def test_lock_is_released_after_a_run_so_a_later_run_can_proceed(tmp_path, monke
     assert second == 0
 
 
-def test_github_sync_failure_after_successful_update_returns_exit_1(tmp_path, monkeypatch):
+# ---------------------------------------------------------------------
+# All three files already current -> zero commits, exit 0
+# ---------------------------------------------------------------------
+
+def test_all_three_files_already_current_creates_no_commits(tmp_path, monkeypatch):
     log_dir = _use_temp_paths(tmp_path, monkeypatch)
-    _stub_update_numbers(monkeypatch, updated=True, message="New drawing added.")
-
-    def _sync_boom():
-        raise GithubSyncError("GitHub PUT failed with status 500")
-
-    monkeypatch.setattr(cron_update, "sync_numbers_json", _sync_boom)
-
-    exit_code = cron_update.main([])
-
-    assert exit_code == 1
-    # The database update itself still succeeded and was logged as such —
-    # only the sync step failed.
-    lines = _read_log_lines(log_dir / "cron_update.log")
-    assert any("New drawing inserted" in line["message"] for line in lines)
-
-
-def test_github_sync_success_with_change_is_logged(tmp_path, monkeypatch):
-    log_dir = _use_temp_paths(tmp_path, monkeypatch)
-    _stub_update_numbers(monkeypatch, updated=True, message="New drawing added.")
-    _stub_sync_success(monkeypatch, changed=True, commit_sha="abc123")
+    _default_stubs(monkeypatch, updated=True, changed_paths=())  # nothing changed anywhere
 
     exit_code = cron_update.main([])
 
     assert exit_code == 0
     lines = _read_log_lines(log_dir / "cron_update.log")
-    assert any("GitHub backup updated" in line["message"] and "abc123" in line["message"] for line in lines)
+    assert not any("updated: commit" in line["message"] for line in lines)
+
+
+# ---------------------------------------------------------------------
+# Manifest only synced when draws_backup.json actually changed
+# ---------------------------------------------------------------------
+
+def test_manifest_synced_when_draws_backup_changes(tmp_path, monkeypatch):
+    log_dir = _use_temp_paths(tmp_path, monkeypatch)
+    _default_stubs(monkeypatch, updated=True, changed_paths={DRAWS_BACKUP_GITHUB_PATH, BACKUP_MANIFEST_GITHUB_PATH})
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 0
+    lines = _read_log_lines(log_dir / "cron_update.log")
+    assert any("draws_backup.json updated" in line["message"] for line in lines)
+    assert any("backup manifest updated" in line["message"] for line in lines)
+
+
+def test_manifest_not_synced_when_draws_backup_unchanged(tmp_path, monkeypatch):
+    log_dir = _use_temp_paths(tmp_path, monkeypatch)
+    # numbers.json changed, but draws_backup.json did not -> manifest sync
+    # must never even be attempted.
+    _default_stubs(monkeypatch, updated=True, changed_paths={NUMBERS_JSON_GITHUB_PATH})
+
+    def _fake_sync_file(local_path, github_path, commit_message):
+        if github_path == BACKUP_MANIFEST_GITHUB_PATH:
+            raise AssertionError("manifest must not be synced when draws_backup.json is unchanged")
+        if github_path == NUMBERS_JSON_GITHUB_PATH:
+            return GithubSyncResult(changed=True, commit_sha="commit-numbers")
+        return GithubSyncResult(changed=False)
+
+    monkeypatch.setattr(cron_update, "sync_file", _fake_sync_file)
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 0
+
+
+# ---------------------------------------------------------------------
+# Partial sync failure
+# ---------------------------------------------------------------------
+
+def test_partial_sync_failure_returns_exit_1_but_other_files_still_synced(tmp_path, monkeypatch):
+    log_dir = _use_temp_paths(tmp_path, monkeypatch)
+    # numbers.json succeeds; draws_backup.json fails.
+    _default_stubs(
+        monkeypatch, updated=True,
+        changed_paths={NUMBERS_JSON_GITHUB_PATH},
+        failing_paths={DRAWS_BACKUP_GITHUB_PATH},
+    )
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 1
+    lines = _read_log_lines(log_dir / "cron_update.log")
+    # numbers.json's success is still logged despite the other failure.
+    assert any("numbers.json updated" in line["message"] for line in lines)
+
+
+def test_snapshot_rotation_failure_is_partial_failure_but_sync_still_attempted(tmp_path, monkeypatch):
+    log_dir = _use_temp_paths(tmp_path, monkeypatch)
+    _default_stubs(monkeypatch, updated=True, snapshot_fails=True, changed_paths={NUMBERS_JSON_GITHUB_PATH})
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 1
+    lines = _read_log_lines(log_dir / "cron_update.log")
+    assert any("Private snapshot rotation failed" in line["message"] for line in lines)
+    # Sync still ran and succeeded despite the snapshot failure.
+    assert any("numbers.json updated" in line["message"] for line in lines)
+
+
+def test_backup_export_failure_skips_archive_sync_but_still_syncs_numbers_json(tmp_path, monkeypatch):
+    log_dir = _use_temp_paths(tmp_path, monkeypatch)
+    _default_stubs(monkeypatch, updated=True, export_fails=True, changed_paths={NUMBERS_JSON_GITHUB_PATH})
+
+    def _fake_sync_file(local_path, github_path, commit_message):
+        if github_path in (DRAWS_BACKUP_GITHUB_PATH, BACKUP_MANIFEST_GITHUB_PATH):
+            raise AssertionError("must not attempt to sync a backup that failed to export")
+        return GithubSyncResult(changed=True, commit_sha="commit-numbers")
+
+    monkeypatch.setattr(cron_update, "sync_file", _fake_sync_file)
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 1
+    lines = _read_log_lines(log_dir / "cron_update.log")
+    assert any("Backup export failed" in line["message"] for line in lines)
+    assert any("numbers.json updated" in line["message"] for line in lines)
+
+
+# ---------------------------------------------------------------------
+# Snapshot rotation only runs when a new drawing was inserted
+# ---------------------------------------------------------------------
+
+def test_snapshot_rotation_skipped_when_no_new_drawing(tmp_path, monkeypatch):
+    _use_temp_paths(tmp_path, monkeypatch)
+    _stub_update_numbers(monkeypatch, updated=False)
+    _stub_export_backup(monkeypatch)
+    _stub_sync_file(monkeypatch)
+
+    def _should_not_be_called():
+        raise AssertionError("snapshot rotation must not run when no new drawing was inserted")
+
+    monkeypatch.setattr(cron_update, "create_and_rotate_snapshot", _should_not_be_called)
+
+    exit_code = cron_update.main([])
+
+    assert exit_code == 0
+
+
+def test_snapshot_rotation_runs_when_new_drawing_inserted(tmp_path, monkeypatch):
+    _use_temp_paths(tmp_path, monkeypatch)
+    _stub_update_numbers(monkeypatch, updated=True)
+    _stub_export_backup(monkeypatch)
+    _stub_sync_file(monkeypatch)
+
+    calls = []
+    monkeypatch.setattr(cron_update, "create_and_rotate_snapshot", lambda: calls.append(1) or (Path("x.sqlite3"), []))
+
+    cron_update.main([])
+
+    assert len(calls) == 1
 
 
 def test_runs_from_unrelated_working_directory(tmp_path):

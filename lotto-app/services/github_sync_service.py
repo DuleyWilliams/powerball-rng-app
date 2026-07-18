@@ -1,5 +1,5 @@
-"""Synchronizes lotto-app/numbers.json to GitHub via the REST Contents
-API — no git, git CLI, subprocess, SSH keys, or GitPython.
+"""Generic GitHub Contents API file synchronization — no git, git CLI,
+subprocess, SSH keys, or GitPython.
 
 The token is read from a server-only secret file (never committed, see
 github_sync.secret.json.example) and must never appear in log messages,
@@ -18,14 +18,12 @@ from typing import Optional
 
 import requests
 
-from core.config import DATA_FILE
+from core.config import DATA_FILE, NUMBERS_JSON_GITHUB_PATH, COMMIT_MESSAGE_NUMBERS_JSON
 
 logger = logging.getLogger(__name__)
 
 SECRET_FILE = Path(__file__).resolve().parent.parent / "github_sync.secret.json"
 GITHUB_API_BASE = "https://api.github.com"
-CONTENTS_PATH = "lotto-app/numbers.json"
-COMMIT_MESSAGE = "Update Powerball drawing backup data"
 REQUEST_TIMEOUT_SECONDS = 20
 
 _REQUIRED_SECRET_KEYS = ("token", "owner", "repo", "branch")
@@ -82,22 +80,26 @@ def _headers(token: str) -> dict:
     }
 
 
-def _contents_url(config: GithubSyncConfig) -> str:
-    return f"{GITHUB_API_BASE}/repos/{config.owner}/{config.repo}/contents/{CONTENTS_PATH}"
+def _contents_url(config: GithubSyncConfig, github_path: str) -> str:
+    return f"{GITHUB_API_BASE}/repos/{config.owner}/{config.repo}/contents/{github_path}"
 
 
-def _fetch_remote(config: GithubSyncConfig) -> tuple[bytes, str]:
-    """Returns (decoded_content_bytes, sha). Never raises anything that
-    could carry the token or a raw response body."""
+def _fetch_remote(config: GithubSyncConfig, github_path: str) -> tuple[Optional[bytes], Optional[str]]:
+    """Returns (content_bytes, sha). (None, None) means the file
+    doesn't exist yet on GitHub — a create, not an update. Never raises
+    anything that could carry the token or a raw response body."""
     try:
         response = requests.get(
-            _contents_url(config),
+            _contents_url(config, github_path),
             headers=_headers(config.token),
             params={"ref": config.branch},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except requests.RequestException as error:
         raise GithubSyncError(f"GitHub GET request failed: {type(error).__name__}") from None
+
+    if response.status_code == 404:
+        return None, None
 
     if response.status_code != 200:
         raise GithubSyncError(f"GitHub GET failed with status {response.status_code}")
@@ -117,19 +119,28 @@ def _fetch_remote(config: GithubSyncConfig) -> tuple[bytes, str]:
     return decoded, sha
 
 
-def _push_update(config: GithubSyncConfig, new_content: bytes, sha: str) -> str:
-    """Returns the new commit SHA. Never raises anything that could
-    carry the token or a raw response body."""
+def _push_update(
+    config: GithubSyncConfig,
+    github_path: str,
+    new_content: bytes,
+    sha: Optional[str],
+    commit_message: str,
+) -> str:
+    """Returns the new commit SHA. sha=None creates a new file (GitHub
+    rejects a sha field for a file that doesn't exist yet). Never
+    raises anything that could carry the token or a raw response body.
+    """
     body = {
-        "message": COMMIT_MESSAGE,
+        "message": commit_message,
         "content": base64.b64encode(new_content).decode("ascii"),
-        "sha": sha,
         "branch": config.branch,
     }
+    if sha is not None:
+        body["sha"] = sha
 
     try:
         response = requests.put(
-            _contents_url(config),
+            _contents_url(config, github_path),
             headers=_headers(config.token),
             json=body,
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -146,31 +157,48 @@ def _push_update(config: GithubSyncConfig, new_content: bytes, sha: str) -> str:
         raise GithubSyncError(f"GitHub PUT returned an unexpected payload: {type(error).__name__}") from None
 
 
-def sync_numbers_json(secret_file: Path = SECRET_FILE, local_file: Path = DATA_FILE) -> GithubSyncResult:
-    """Pushes local_file to GitHub if its content differs from what's
-    currently there. Raises GithubSyncError on any failure — every
-    failure is also logged as github_sync_failed before the exception
+def sync_file(
+    local_path: Path,
+    github_path: str,
+    commit_message: str,
+    secret_file: Path = SECRET_FILE,
+) -> GithubSyncResult:
+    """Pushes local_path to github_path if its content differs from
+    what's currently there on GitHub (or creates it if it doesn't exist
+    there yet). Raises GithubSyncError on any failure — every failure
+    is also logged as github_sync_failed before the exception
     propagates, so callers don't need to duplicate that logging.
     """
-    logger.info("github_sync_started")
+    logger.info("github_sync_started path=%s", github_path)
 
     try:
         config = load_config(secret_file)
 
-        if not local_file.exists():
-            raise GithubSyncError(f"Local file not found: {local_file}")
+        if not local_path.exists():
+            raise GithubSyncError(f"Local file not found: {local_path}")
 
-        local_content = local_file.read_bytes()
-        remote_content, remote_sha = _fetch_remote(config)
+        local_content = local_path.read_bytes()
+        remote_content, remote_sha = _fetch_remote(config, github_path)
 
         if remote_content == local_content:
-            logger.info("github_sync_skipped_no_change")
+            logger.info("github_sync_skipped_no_change path=%s", github_path)
             return GithubSyncResult(changed=False)
 
-        commit_sha = _push_update(config, local_content, remote_sha)
-        logger.info("github_sync_completed commit_sha=%s", commit_sha)
+        commit_sha = _push_update(config, github_path, local_content, remote_sha, commit_message)
+        logger.info("github_sync_completed path=%s commit_sha=%s", github_path, commit_sha)
         return GithubSyncResult(changed=True, commit_sha=commit_sha)
 
     except GithubSyncError as error:
-        logger.error("github_sync_failed: %s", error)
+        logger.error("github_sync_failed path=%s: %s", github_path, error)
         raise
+
+
+def sync_numbers_json(secret_file: Path = SECRET_FILE, local_file: Optional[Path] = None) -> GithubSyncResult:
+    """Preserves the original numbers.json sync behavior as a thin
+    wrapper around sync_file()."""
+    return sync_file(
+        local_file if local_file is not None else DATA_FILE,
+        NUMBERS_JSON_GITHUB_PATH,
+        COMMIT_MESSAGE_NUMBERS_JSON,
+        secret_file=secret_file,
+    )

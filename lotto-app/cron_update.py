@@ -10,14 +10,22 @@ Deliberately dependency-light: only requests/beautifulsoup4 plus the
 stdlib. Never imports streamlit, plotly, scipy, pandas, or app.py — see
 requirements-cron.txt.
 
-After a successful database update, also syncs lotto-app/numbers.json to
-GitHub (services.github_sync_service) via the REST Contents API — no
-git/subprocess/SSH involved.
+After a successful database update, it also:
+  - takes a private, IONOS-only SQLite snapshot (never synced to GitHub)
+    when a new drawing was actually inserted, retaining the newest 4
+  - regenerates the portable backup files (backups/draws_backup.json,
+    backups/backup_manifest.json)
+  - synchronizes numbers.json, draws_backup.json, and backup_manifest.json
+    to GitHub (services.github_sync_service) via the REST Contents API —
+    no git/subprocess/SSH involved, and no commit for a file whose
+    content hasn't actually changed.
 
 Exit codes:
-    0 - success (new drawing inserted), no new drawing, or --dry-run
-    1 - failure (fetch/validation/database error, or GitHub sync failure
-        after a successful database update)
+    0 - success (new drawing inserted), no new drawing, or --dry-run,
+        with no partial failures
+    1 - failure (fetch/validation/database error), OR the database
+        update succeeded but something in the backup/sync pipeline
+        (snapshot rotation, backup export, or any GitHub sync) failed
     2 - another run already holds the lock
 """
 
@@ -38,8 +46,22 @@ LOG_DIR = APP_DIR / "logs"
 LOG_FILE = LOG_DIR / "cron_update.log"
 LOCK_FILE = LOG_DIR / "cron_update.lock"
 
-from services.update_service import update_numbers  # noqa: E402  (needs sys.path set up first)
-from services.github_sync_service import sync_numbers_json, GithubSyncError  # noqa: E402
+from core.config import (  # noqa: E402  (needs sys.path set up first)
+    DATA_FILE,
+    DRAWS_BACKUP_FILE,
+    BACKUP_MANIFEST_FILE,
+    NUMBERS_JSON_GITHUB_PATH,
+    DRAWS_BACKUP_GITHUB_PATH,
+    BACKUP_MANIFEST_GITHUB_PATH,
+    COMMIT_MESSAGE_NUMBERS_JSON,
+    COMMIT_MESSAGE_DRAWS_BACKUP,
+    COMMIT_MESSAGE_BACKUP_MANIFEST,
+    SNAPSHOT_RETENTION_COUNT,
+)
+from data.backup_export import export_backup
+from data.snapshot import create_and_rotate_snapshot
+from services.update_service import update_numbers  # noqa: E402
+from services.github_sync_service import sync_file, GithubSyncError  # noqa: E402
 
 
 class LockHeldError(Exception):
@@ -131,21 +153,74 @@ def run(logger: logging.Logger, dry_run: bool = False) -> int:
     else:
         logger.info("No new drawing: %s", result["message"])
 
-    # Sync runs after every successful database update, whether or not a
-    # new drawing was inserted — sync_numbers_json() itself detects when
-    # GitHub is already current and no-ops in that case.
+    # Everything below is best-effort: each step is attempted
+    # independently so one failure (e.g. GitHub being briefly
+    # unreachable) doesn't skip an otherwise-successful private
+    # snapshot, or vice versa. Any failure here is a *partial* failure
+    # — the database update itself already succeeded — and is
+    # aggregated into a single exit-code-1 decision at the end.
+    had_partial_failure = False
+
+    # Private SQLite snapshot — IONOS-only, never synced to GitHub, and
+    # only taken when a new drawing was actually inserted.
+    if result["updated"]:
+        try:
+            snapshot_path, removed = create_and_rotate_snapshot()
+            logger.info(
+                "Private snapshot created: %s (retained newest %d, removed %d)",
+                snapshot_path.name, SNAPSHOT_RETENTION_COUNT, len(removed),
+            )
+        except Exception as error:
+            logger.error("Private snapshot rotation failed: %s", error, exc_info=True)
+            had_partial_failure = True
+
+    # Regenerate the portable backup files. If this fails, numbers.json
+    # can still be synced independently below — only the archive/
+    # manifest sync gets skipped.
+    backup_export_ok = True
     try:
-        sync_result = sync_numbers_json()
-    except GithubSyncError:
-        # sync_numbers_json() already logged github_sync_failed with a
-        # safe (token-free) message; the database update itself
-        # succeeded, so this is a partial failure, not a full one.
-        return 1
+        export_backup()
+    except Exception as error:
+        logger.error("Backup export failed: %s", error, exc_info=True)
+        backup_export_ok = False
+        had_partial_failure = True
 
-    if sync_result.changed:
-        logger.info("GitHub backup updated: commit %s", sync_result.commit_sha)
+    sync_targets = [(DATA_FILE, NUMBERS_JSON_GITHUB_PATH, COMMIT_MESSAGE_NUMBERS_JSON, "numbers.json")]
+    if backup_export_ok:
+        sync_targets.append((DRAWS_BACKUP_FILE, DRAWS_BACKUP_GITHUB_PATH, COMMIT_MESSAGE_DRAWS_BACKUP, "draws_backup.json"))
 
-    return 0
+    draws_backup_changed = False
+
+    for local_path, github_path, commit_message, label in sync_targets:
+        try:
+            sync_result = sync_file(local_path, github_path, commit_message)
+        except GithubSyncError:
+            # sync_file() already logged github_sync_failed with a safe
+            # (token-free) message.
+            had_partial_failure = True
+            continue
+
+        if sync_result.changed:
+            logger.info("GitHub %s updated: commit %s", label, sync_result.commit_sha)
+            if label == "draws_backup.json":
+                draws_backup_changed = True
+
+    # The manifest's own bytes always differ run-to-run (it embeds
+    # generated_at_utc), so a plain byte comparison against GitHub would
+    # create a commit every single day even when the underlying data is
+    # unchanged. Instead, only sync it when draws_backup.json itself
+    # actually changed — driven by draws_backup.json's real byte
+    # comparison against GitHub above, which is the true signal for
+    # "did the draw data change."
+    if backup_export_ok and draws_backup_changed:
+        try:
+            manifest_result = sync_file(BACKUP_MANIFEST_FILE, BACKUP_MANIFEST_GITHUB_PATH, COMMIT_MESSAGE_BACKUP_MANIFEST)
+            if manifest_result.changed:
+                logger.info("GitHub backup manifest updated: commit %s", manifest_result.commit_sha)
+        except GithubSyncError:
+            had_partial_failure = True
+
+    return 1 if had_partial_failure else 0
 
 
 def parse_args(argv):

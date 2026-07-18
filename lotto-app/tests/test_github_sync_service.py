@@ -134,9 +134,29 @@ def test_github_get_failure_raises(tmp_path):
     secret = _write_secret(tmp_path)
     local = _write_local_file(tmp_path, b"{}")
 
-    with patch.object(sync_module.requests, "get", return_value=_mock_response(404)):
-        with pytest.raises(GithubSyncError, match="GET failed with status 404"):
+    # 404 is handled separately (file doesn't exist yet -> create); a
+    # genuine failure is any other non-200 status.
+    with patch.object(sync_module.requests, "get", return_value=_mock_response(500)):
+        with pytest.raises(GithubSyncError, match="GET failed with status 500"):
             sync_numbers_json(secret_file=secret, local_file=local)
+
+
+def test_sync_file_creates_new_file_when_remote_missing(tmp_path):
+    secret = _write_secret(tmp_path)
+    local = _write_local_file(tmp_path, b"brand-new-content")
+
+    with patch.object(sync_module.requests, "get", return_value=_mock_response(404)) as mock_get, \
+         patch.object(sync_module.requests, "put", return_value=_github_put_response("createcommit")) as mock_put:
+        result = sync_module.sync_file(local, "lotto-app/backups/draws_backup.json", "Update dated Powerball draw archive", secret_file=secret)
+
+    assert result.changed is True
+    assert result.commit_sha == "createcommit"
+    mock_get.assert_called_once()
+
+    _, kwargs = mock_put.call_args
+    body = kwargs["json"]
+    assert "sha" not in body  # creating a new file must not send a sha
+    assert body["message"] == "Update dated Powerball draw archive"
 
 
 def test_github_get_network_error_raises(tmp_path):
