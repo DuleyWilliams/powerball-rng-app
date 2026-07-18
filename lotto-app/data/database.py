@@ -35,8 +35,15 @@ def init_db() -> None:
 
     Safe to call on every startup / every connection — pure DDL, idempotent.
     """
-    with sqlite3.connect(DB_FILE) as conn:
+    # sqlite3.Connection's context manager only handles commit/rollback,
+    # not closing the connection — an explicit close() is required, or
+    # this leaks a connection (and its file handle) on every call.
+    conn = sqlite3.connect(DB_FILE)
+    try:
         conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 @contextmanager

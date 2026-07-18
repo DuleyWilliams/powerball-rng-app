@@ -45,3 +45,22 @@ NY_OPEN_DATA_URL: str = "https://data.ny.gov/resource/d6yy-54nr.json"
 SOURCE_LEGACY_JSON: str = "legacy_json"
 SOURCE_NY_OPEN_DATA: str = "data.ny.gov"
 SOURCE_TN_SCRAPER: str = "powerball.com"
+SOURCE_RESTORED_BACKUP: str = "restored_backup"
+
+# Portable backup files — synced to GitHub via services.github_sync_service.
+BACKUPS_DIR: Path = Path(__file__).resolve().parent.parent / "backups"
+DRAWS_BACKUP_FILE: Path = BACKUPS_DIR / "draws_backup.json"
+BACKUP_MANIFEST_FILE: Path = BACKUPS_DIR / "backup_manifest.json"
+
+# Private SQLite snapshots — IONOS-only, never synced to GitHub (see .gitignore).
+PRIVATE_BACKUPS_DIR: Path = Path(__file__).resolve().parent.parent / "private_backups"
+SNAPSHOT_RETENTION_COUNT: int = 4
+
+# GitHub Contents API destination paths + commit messages, one per synced file.
+NUMBERS_JSON_GITHUB_PATH: str = "lotto-app/numbers.json"
+DRAWS_BACKUP_GITHUB_PATH: str = "lotto-app/backups/draws_backup.json"
+BACKUP_MANIFEST_GITHUB_PATH: str = "lotto-app/backups/backup_manifest.json"
+
+COMMIT_MESSAGE_NUMBERS_JSON: str = "Update Powerball drawing backup data"
+COMMIT_MESSAGE_DRAWS_BACKUP: str = "Update dated Powerball draw archive"
+COMMIT_MESSAGE_BACKUP_MANIFEST: str = "Update Powerball backup manifest"
