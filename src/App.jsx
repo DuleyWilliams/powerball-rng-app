@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Shuffle, BarChart3, Upload, RotateCcw, AlertTriangle, Copy, CheckCircle2 } from "lucide-react";
+import { Shuffle, BarChart3, Upload, RotateCcw, AlertTriangle, Copy, CheckCircle2, Database, CircleCheck } from "lucide-react";
+import canonicalDrawData from "../lotto-app/numbers.json";
 
 function Card({ className = "", children }) {
   return <div className={className}>{children}</div>;
@@ -21,7 +22,8 @@ function Button({ className = "", variant, children, ...props }) {
 }
 
 
-const STORAGE_KEY = "powerball_rng_raw_data_v1";
+const STORAGE_KEY = "powerball_rng_custom_draws_v2";
+const CURRENT_POWERBALL_MAX = 26;
 
 function drawToLine(draw) {
   return `${draw.white.map(fmt).join(" ")} ${fmt(draw.powerball)}`;
@@ -35,6 +37,24 @@ function normalizeDraw(nums) {
   const white = nums.slice(0, 5).map(Number).sort((a, b) => a - b);
   const powerball = Number(nums[5]);
   return { white, powerball };
+}
+
+const CANONICAL_DRAWS = extractDrawArraysFromJson(canonicalDrawData)
+  .map(normalizeDraw)
+  .filter(draw => validateDraw(draw).length === 0);
+
+function readCustomDraws() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    if (!Array.isArray(stored)) return [];
+
+    return stored
+      .filter(Array.isArray)
+      .map(normalizeDraw)
+      .filter(draw => validateDraw(draw).length === 0);
+  } catch {
+    return [];
+  }
 }
 
 function extractDrawArraysFromJson(value) {
@@ -112,82 +132,16 @@ function validateDraw(draw, indexLabel = "Draw") {
 }
 
 
-const DEFAULT_RAW = `11 21 27 36 62 24
-14 18 36 49 67 18
-18 31 36 43 47 20
-06 24 30 53 56 19
-05 18 23 40 50 18
-21 37 52 53 58 05
-06 10 31 37 44 23
-01 03 13 44 56 26
-18 20 27 45 65 06
-11 28 37 40 53 13
-02 06 40 42 55 24
-23 32 33 45 49 14
-14 16 37 48 58 18
-13 15 17 45 63 13
-07 15 18 32 45 20
-04 05 17 43 52 05
-51 54 57 60 69 11
-02 57 58 60 65 26
-08 12 18 44 51 18
-28 31 40 41 46 04
-03 04 06 48 53 10
-11 14 31 47 48 04
-17 54 56 63 69 20
-04 23 37 61 67 07
-27 32 34 43 52 13
-06 13 38 39 53 06
-10 24 27 35 53 18
-03 43 45 61 65 14
-03 04 11 41 67 05
-01 20 22 60 66 03
-14 26 38 45 46 13
-04 19 23 25 49 14
-14 20 39 65 67 02
-40 53 60 68 69 22
-05 08 17 27 28 14
-17 33 35 42 52 09
-01 02 07 52 61 04
-05 37 40 64 66 05
-01 16 48 49 65 08
-15 39 58 63 67 07
-20 28 33 63 68 20
-01 15 21 32 46 01
-04 08 22 32 58 04
-04 33 43 53 65 21
-02 28 31 44 52 18
-21 40 44 50 55 16
-11 31 50 52 58 18
-17 18 37 44 53 18
-05 11 51 56 61 02
-34 38 42 61 62 19`;
-
-function parseInput(raw) {
-  const lines = raw.split(/\n+/).map(l => l.trim()).filter(Boolean);
-  const draws = [];
-  const errors = [];
-
-  lines.forEach((line, index) => {
-    const nums = line.match(/\d+/g)?.map(Number) || [];
-    if (nums.length !== 6) {
-      errors.push(`Line ${index + 1}: expected 6 numbers, got ${nums.length}`);
-      return;
-    }
-
-    const draw = normalizeDraw(nums);
-    errors.push(...validateDraw(draw, `Line ${index + 1}`));
-    draws.push(draw);
-  });
-
-  return { draws, errors };
-}
-
 function countFreq(draws, range, type = "white") {
   const counts = Object.fromEntries(Array.from({ length: range }, (_, i) => [i + 1, 0]));
   draws.forEach(d => {
-    if (type === "white") d.white.forEach(n => counts[n] = (counts[n] || 0) + 1);
-    else counts[d.powerball] = (counts[d.powerball] || 0) + 1;
+    if (type === "white") {
+      d.white.forEach(n => {
+        if (n >= 1 && n <= range) counts[n] += 1;
+      });
+    } else if (d.powerball >= 1 && d.powerball <= range) {
+      counts[d.powerball] += 1;
+    }
   });
   return counts;
 }
@@ -215,7 +169,7 @@ function buildWeights(freq, range, strength) {
 
 function generateOne(draws, strength, mode) {
   const whiteFreq = countFreq(draws, 69, "white");
-  const pbRange = 39;
+  const pbRange = CURRENT_POWERBALL_MAX;
   const pbFreq = countFreq(draws, pbRange, "pb");
 
   let whiteWeights = buildWeights(whiteFreq, 69, strength);
@@ -252,34 +206,40 @@ function fmt(n) {
 }
 
 export default function PowerballWeightedRngApp() {
-  const [raw, setRaw] = useState(() => localStorage.getItem(STORAGE_KEY) || DEFAULT_RAW);
+  const [customDraws, setCustomDraws] = useState(readCustomDraws);
   const [strength, setStrength] = useState(1.25);
   const [mode, setMode] = useState("balanced");
   const [generated, setGenerated] = useState([]);
   const [copied, setCopied] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
 
-
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, raw);
-  }, [raw]);
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(customDraws.map(draw => [...draw.white, draw.powerball]))
+    );
+  }, [customDraws]);
 
-  const parsed = useMemo(() => parseInput(raw), [raw]);
-  const whiteFreq = useMemo(() => countFreq(parsed.draws, 69, "white"), [parsed.draws]);
-  const pbFreq = useMemo(() => countFreq(parsed.draws, 39, "pb"), [parsed.draws]);
+  const draws = useMemo(() => [...CANONICAL_DRAWS, ...customDraws], [customDraws]);
+  const whiteFreq = useMemo(() => countFreq(draws, 69, "white"), [draws]);
+  const pbFreq = useMemo(() => countFreq(draws, CURRENT_POWERBALL_MAX, "pb"), [draws]);
   const topWhite = useMemo(() => topEntries(whiteFreq, 12), [whiteFreq]);
   const topPb = useMemo(() => topEntries(pbFreq, 12), [pbFreq]);
+  const datasetPreview = useMemo(
+    () => draws.slice(-24).map(drawToLine).join("\n"),
+    [draws]
+  );
 
   const stats = useMemo(() => {
-    const sums = parsed.draws.map(d => d.white.reduce((a, b) => a + b, 0));
+    const sums = draws.map(d => d.white.reduce((a, b) => a + b, 0));
     const avgSum = sums.length ? Math.round(sums.reduce((a, b) => a + b, 0) / sums.length) : 0;
-    const oddEven = parsed.draws.map(d => d.white.filter(n => n % 2).length);
+    const oddEven = draws.map(d => d.white.filter(n => n % 2).length);
     const avgOdd = oddEven.length ? (oddEven.reduce((a, b) => a + b, 0) / oddEven.length).toFixed(1) : "0";
-    return { avgSum, avgOdd, count: parsed.draws.length };
-  }, [parsed.draws]);
+    return { avgSum, avgOdd, count: draws.length };
+  }, [draws]);
 
   const handleGenerate = (qty = 5) => {
-    const picks = Array.from({ length: qty }, () => generateOne(parsed.draws, Number(strength), mode));
+    const picks = Array.from({ length: qty }, () => generateOne(draws, Number(strength), mode));
     setGenerated(picks);
     setCopied(false);
   };
@@ -291,7 +251,7 @@ export default function PowerballWeightedRngApp() {
     const text = await file.text();
     const { imported, errors } = parseUploadText(text, file.name);
 
-    const currentKeys = new Set(parsed.draws.map(drawKey));
+    const currentKeys = new Set(draws.map(drawKey));
     const validNew = [];
     const skipped = [];
 
@@ -313,8 +273,7 @@ export default function PowerballWeightedRngApp() {
     });
 
     if (validNew.length) {
-      const appended = validNew.map(drawToLine).join("\n");
-      setRaw(prev => `${prev.trim()}\n${appended}`.trim());
+      setCustomDraws(prev => [...prev, ...validNew]);
       setGenerated([]);
     }
 
@@ -328,10 +287,10 @@ export default function PowerballWeightedRngApp() {
   };
 
   const resetToDefault = () => {
-    setRaw(DEFAULT_RAW);
+    setCustomDraws([]);
     localStorage.removeItem(STORAGE_KEY);
     setGenerated([]);
-    setUploadStatus("Reset to starter data");
+    setUploadStatus("Manual imports cleared. Canonical repository data restored.");
   };
 
   const copyPicks = async () => {
@@ -350,7 +309,7 @@ export default function PowerballWeightedRngApp() {
                 <AlertTriangle className="h-4 w-4" /> RNG similarity model, not a prediction engine
               </div>
               <h1 className="text-3xl md:text-5xl font-black tracking-tight">Powerball Weighted RNG Lab</h1>
-              <p className="mt-3 max-w-3xl text-slate-300">This app studies your supplied draw history, builds weighted frequency tables, and generates new sets that resemble the randomness profile of the data.</p>
+              <p className="mt-3 max-w-3xl text-slate-300">This app studies the repository’s canonical draw history, builds weighted frequency tables, and generates new sets that resemble the randomness profile of the data.</p>
             </div>
             <div className="grid grid-cols-3 gap-3 text-center">
               <div className="rounded-2xl bg-slate-800 p-4"><div className="text-2xl font-bold">{stats.count}</div><div className="text-xs text-slate-400">Draws</div></div>
@@ -364,18 +323,33 @@ export default function PowerballWeightedRngApp() {
           <Card className="lg:col-span-2 rounded-3xl border-slate-800 bg-slate-900 text-slate-100">
             <CardContent className="p-5 space-y-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-2 font-bold text-xl"><Upload className="h-5 w-5" /> Number Data</div>
+                <div className="flex items-center gap-2 font-bold text-xl"><Database className="h-5 w-5" /> Canonical Dataset</div>
                 <div className="flex gap-2">
                   <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-300">
                     Upload JSON/CSV
                     <input type="file" accept=".json,.csv,.txt" onChange={handleUpload} className="hidden" />
                   </label>
-                  <Button onClick={resetToDefault} variant="outline" className="rounded-xl border-slate-700">Reset</Button>
+                  <Button onClick={resetToDefault} variant="outline" className="rounded-xl border-slate-700" disabled={customDraws.length === 0}>Clear imports</Button>
                 </div>
               </div>
-              <textarea value={raw} onChange={e => setRaw(e.target.value)} className="h-[420px] w-full rounded-2xl border border-slate-700 bg-slate-950 p-4 font-mono text-sm outline-none focus:border-amber-300" />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4">
+                  <div className="flex items-center gap-2 text-sm font-bold text-emerald-300"><CircleCheck className="h-4 w-4" /> Repository data loaded</div>
+                  <div className="mt-2 text-2xl font-black">{CANONICAL_DRAWS.length.toLocaleString()}</div>
+                  <div className="text-xs text-slate-400">canonical drawings</div>
+                </div>
+                <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+                  <div className="text-sm font-bold text-slate-300">Current generation rules</div>
+                  <div className="mt-2 text-sm text-slate-400">White balls 1–69</div>
+                  <div className="text-sm text-slate-400">Powerball 1–{CURRENT_POWERBALL_MAX}</div>
+                </div>
+              </div>
+              {customDraws.length > 0 && <div className="rounded-2xl bg-sky-500/10 p-3 text-sm text-sky-200">{customDraws.length} manually imported draw{customDraws.length === 1 ? "" : "s"} included</div>}
+              <div>
+                <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Dataset sample</div>
+                <textarea readOnly value={datasetPreview} aria-label="Dataset sample" className="h-[300px] w-full resize-none rounded-2xl border border-slate-700 bg-slate-950 p-4 font-mono text-sm text-slate-300 outline-none" />
+              </div>
               {uploadStatus && <div className="rounded-2xl bg-emerald-500/10 p-3 text-sm text-emerald-200">{uploadStatus}</div>}
-              {parsed.errors.length > 0 && <div className="rounded-2xl bg-red-500/10 p-3 text-sm text-red-200">{parsed.errors.slice(0, 4).join(" • ")}</div>}
             </CardContent>
           </Card>
 
