@@ -30,11 +30,18 @@ class DatedDraw:
     balls: Draw
 
 
+@dataclass(frozen=True)
+class ExportDraw:
+    draw_date: Optional[date]
+    balls: Draw
+    source: str
+
+
 def _parse_date(value: Optional[str]) -> Optional[date]:
     return date.fromisoformat(value) if value else None
 
 
-def get_all_draws() -> list[Draw]:
+def get_all_export_draws() -> list[ExportDraw]:
     """All draws, newest first.
 
     Dated rows sort by draw_date descending; undated legacy rows (no
@@ -44,13 +51,25 @@ def get_all_draws() -> list[Draw]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT ball1, ball2, ball3, ball4, ball5, powerball
+            SELECT draw_date, ball1, ball2, ball3, ball4, ball5, powerball, source
             FROM draws
             ORDER BY (draw_date IS NULL) ASC, draw_date DESC, id DESC
             """
         ).fetchall()
 
-    return [[row["ball1"], row["ball2"], row["ball3"], row["ball4"], row["ball5"], row["powerball"]] for row in rows]
+    return [
+        ExportDraw(
+            draw_date=_parse_date(row["draw_date"]),
+            balls=[row["ball1"], row["ball2"], row["ball3"], row["ball4"], row["ball5"], row["powerball"]],
+            source=row["source"],
+        )
+        for row in rows
+    ]
+
+
+def get_all_draws() -> list[Draw]:
+    """Backward-compatible number-only view of the full dataset."""
+    return [record.balls for record in get_all_export_draws()]
 
 
 def get_latest_draw() -> Optional[Draw]:

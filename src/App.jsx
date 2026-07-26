@@ -43,6 +43,25 @@ const CANONICAL_DRAWS = extractDrawArraysFromJson(canonicalDrawData)
   .map(normalizeDraw)
   .filter(draw => validateDraw(draw).length === 0);
 
+const DATASET_META = {
+  schemaVersion: canonicalDrawData.schema_version || 1,
+  generatedAt: canonicalDrawData.generated_at_utc || null,
+  datedDraws: canonicalDrawData.dated_draws ?? null,
+  latestDrawDate: canonicalDrawData.latest_draw_date || null,
+  latestDrawing: canonicalDrawData.latest_drawing?.numbers
+    ? normalizeDraw(canonicalDrawData.latest_drawing.numbers)
+    : null,
+};
+
+function formatDate(value, options = { dateStyle: "medium" }) {
+  if (!value) return null;
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const normalized = isDateOnly ? `${value}T00:00:00Z` : value;
+  const parsed = new Date(normalized);
+  const formatOptions = isDateOnly ? { ...options, timeZone: "UTC" } : options;
+  return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat("en-US", formatOptions).format(parsed);
+}
+
 function readCustomDraws() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -344,6 +363,29 @@ export default function PowerballWeightedRngApp() {
                   <div className="text-sm text-slate-400">Powerball 1–{CURRENT_POWERBALL_MAX}</div>
                 </div>
               </div>
+              {DATASET_META.latestDrawing ? (
+                <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Latest dated drawing</div>
+                      <div className="mt-1 text-sm text-slate-300">{formatDate(DATASET_META.latestDrawDate)}</div>
+                    </div>
+                    <div className="font-mono text-sm text-slate-100">
+                      {DATASET_META.latestDrawing.white.map(fmt).join("  ")}
+                      <span className="ml-2 rounded-full bg-amber-400 px-2.5 py-1 font-black text-slate-950">{fmt(DATASET_META.latestDrawing.powerball)}</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 text-xs text-slate-500">
+                    Dataset v{DATASET_META.schemaVersion}
+                    {DATASET_META.datedDraws !== null && ` • ${DATASET_META.datedDraws.toLocaleString()} dated records`}
+                    {DATASET_META.generatedAt && ` • Exported ${formatDate(DATASET_META.generatedAt, { dateStyle: "medium", timeStyle: "short" })}`}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-200">
+                  Date metadata will appear after the first schema v2 export.
+                </div>
+              )}
               {customDraws.length > 0 && <div className="rounded-2xl bg-sky-500/10 p-3 text-sm text-sky-200">{customDraws.length} manually imported draw{customDraws.length === 1 ? "" : "s"} included</div>}
               <div>
                 <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Dataset sample</div>

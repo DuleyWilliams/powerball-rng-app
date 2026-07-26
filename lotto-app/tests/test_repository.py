@@ -55,6 +55,21 @@ def test_get_latest_draw_returns_most_recent(tmp_path, monkeypatch):
     assert repository.get_latest_draw() == [7, 8, 9, 10, 11, 12]
 
 
+def test_get_all_export_draws_preserves_date_numbers_and_source(tmp_path, monkeypatch):
+    _use_temp_db(tmp_path, monkeypatch)
+
+    repository.insert_draw(None, 1, 2, 3, 4, 5, 6, "legacy_json")
+    repository.insert_draw(date(2024, 3, 2), 7, 8, 9, 10, 11, 12, "official")
+
+    records = repository.get_all_export_draws()
+
+    assert records[0].draw_date == date(2024, 3, 2)
+    assert records[0].balls == [7, 8, 9, 10, 11, 12]
+    assert records[0].source == "official"
+    assert records[1].draw_date is None
+    assert records[1].source == "legacy_json"
+
+
 def test_draw_exists_matches_by_date(tmp_path, monkeypatch):
     _use_temp_db(tmp_path, monkeypatch)
     repository.insert_draw(date(2020, 1, 1), 1, 2, 3, 4, 5, 6, "test")
