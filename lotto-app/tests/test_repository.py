@@ -70,6 +70,28 @@ def test_get_all_export_draws_preserves_date_numbers_and_source(tmp_path, monkey
     assert records[1].source == "legacy_json"
 
 
+def test_assign_date_to_undated_draw_updates_exact_match(tmp_path, monkeypatch):
+    _use_temp_db(tmp_path, monkeypatch)
+    numbers = [1, 2, 3, 4, 5, 6]
+    repository.insert_draw(None, *numbers, "powerball.com")
+
+    assert repository.assign_date_to_undated_draw(date(2024, 5, 6), numbers, "data.ny.gov") is True
+
+    records = repository.get_all_export_draws()
+    assert records[0].draw_date == date(2024, 5, 6)
+    assert records[0].source == "data.ny.gov"
+
+
+def test_assign_date_to_undated_draw_refuses_occupied_date(tmp_path, monkeypatch):
+    _use_temp_db(tmp_path, monkeypatch)
+    repository.insert_draw(None, 1, 2, 3, 4, 5, 6, "powerball.com")
+    repository.insert_draw(date(2024, 5, 6), 7, 8, 9, 10, 11, 12, "data.ny.gov")
+
+    assert repository.assign_date_to_undated_draw(
+        date(2024, 5, 6), [1, 2, 3, 4, 5, 6], "data.ny.gov"
+    ) is False
+
+
 def test_draw_exists_matches_by_date(tmp_path, monkeypatch):
     _use_temp_db(tmp_path, monkeypatch)
     repository.insert_draw(date(2020, 1, 1), 1, 2, 3, 4, 5, 6, "test")

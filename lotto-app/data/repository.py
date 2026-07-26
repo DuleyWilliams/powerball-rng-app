@@ -72,6 +72,49 @@ def get_all_draws() -> list[Draw]:
     return [record.balls for record in get_all_export_draws()]
 
 
+def get_undated_export_draws() -> list[ExportDraw]:
+    return [record for record in get_all_export_draws() if record.draw_date is None]
+
+
+def assign_date_to_undated_draw(draw_date: date, balls: Draw, source: str) -> bool:
+    """Attach an authoritative date to one matching undated row.
+
+    Returns False rather than overwriting anything when the target date
+    is already occupied or the undated number combination is absent.
+    """
+    if len(balls) != 6:
+        raise ValueError("Expected five white balls and one Powerball.")
+
+    with get_connection() as conn:
+        date_conflict = conn.execute(
+            "SELECT 1 FROM draws WHERE draw_date = ? LIMIT 1",
+            (draw_date.isoformat(),),
+        ).fetchone()
+        if date_conflict:
+            return False
+
+        row = conn.execute(
+            """
+            SELECT id
+            FROM draws
+            WHERE draw_date IS NULL
+              AND ball1 = ? AND ball2 = ? AND ball3 = ?
+              AND ball4 = ? AND ball5 = ? AND powerball = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            tuple(balls),
+        ).fetchone()
+        if row is None:
+            return False
+
+        cursor = conn.execute(
+            "UPDATE draws SET draw_date = ?, source = ? WHERE id = ? AND draw_date IS NULL",
+            (draw_date.isoformat(), source, row["id"]),
+        )
+        return cursor.rowcount == 1
+
+
 def get_latest_draw() -> Optional[Draw]:
     draws = get_all_draws()
     return draws[0] if draws else None
